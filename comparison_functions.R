@@ -104,24 +104,24 @@ extract_low_dim <- function(exprs_train,
   }
   
   if (SIR) {
-    sir <- WSIR(X = exprs_train,
+    sir <- wSIR(X = exprs_train,
                 coords = coords_train,
                 slices = slices,
                 alpha = 0,
                 varThreshold = varThreshold,
                 maxDirections = directions)
-    sir_project <- project_WSIR(wsir = sir, newdata = as.matrix(exprs_test))
+    sir_project <- project_wSIR(wsir = sir, newdata = as.matrix(exprs_test))
     output$sir <- list(sir$scores, sir_project)
   }
   
   if (WSIR) {
-    wsir <- WSIR(X = exprs_train,
+    wsir <- wSIR(X = exprs_train,
                  coords = coords_train,
                  slices = slices,
                  varThreshold = varThreshold,
                  maxDirections = directions,
                  alpha = alpha)
-    wsir_project <- project_WSIR(wsir = wsir, newdata = as.matrix(exprs_test))
+    wsir_project <- project_wSIR(wsir = wsir, newdata = as.matrix(exprs_test))
     output$wsir <- list(wsir$scores, wsir_project)
   }
   
@@ -136,7 +136,7 @@ extract_low_dim <- function(exprs_train,
   if (PCA) {
     pca <- pca_obj(X = exprs_train, varThreshold = varThreshold)
     pca_train <- pca$scores
-    pca_test <- project_WSIR(wsir = pca, newdata = exprs_test)
+    pca_test <- project_wSIR(wsir = pca, newdata = exprs_test)
     output$pca <- list(pca_train, pca_test)
   }
   
