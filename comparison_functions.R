@@ -89,16 +89,14 @@ extract_low_dim <- function(exprs_train,
                           exprs_test,
                           coords_train,
                           directions = 40,
-                          varThreshold = 0.9,
+                          varThreshold = 0.95,
                           slices = 5,
                           SIR = FALSE,
                           WSIR = FALSE,
                           LDA = FALSE,
                           PCA = FALSE,
                           PLS = FALSE,
-                          alpha = 4,
-                          w01 = FALSE,
-                          thres = 0) {
+                          alpha = 4) {
   output <- list()
   
   if (SIR + WSIR + LDA + PCA + PLS == 0){
@@ -106,36 +104,24 @@ extract_low_dim <- function(exprs_train,
   }
   
   if (SIR) {
-    sir <- WSIR(X = exprs_train,
+    sir <- wSIR(X = exprs_train,
                 coords = coords_train,
                 slices = slices,
-                weighted = FALSE,
+                alpha = 0,
                 varThreshold = varThreshold,
                 maxDirections = directions)
-    sir_project <- project_WSIR(wsir = sir, newdata = as.matrix(exprs_test))
+    sir_project <- project_wSIR(wsir = sir, newdata = as.matrix(exprs_test))
     output$sir <- list(sir$scores, sir_project)
   }
   
   if (WSIR) {
-    if (w01) {
-      wsir <- WSIR_w01(X = exprs_train,
-                             coords = coords_train,
-                             slices = slices,
-                             weighted = TRUE,
-                             varThreshold = varThreshold,
-                             maxDirections = directions,
-                             alpha = alpha,
-                       thres = thres)
-    } else {
-      wsir <- WSIR(X = exprs_train,
-                   coords = coords_train,
-                   slices = slices,
-                   weighted = TRUE,
-                   varThreshold = varThreshold,
-                   maxDirections = directions,
-                   alpha = alpha)
-    }
-    wsir_project <- project_WSIR(wsir = wsir, newdata = as.matrix(exprs_test))
+    wsir <- wSIR(X = exprs_train,
+                 coords = coords_train,
+                 slices = slices,
+                 varThreshold = varThreshold,
+                 maxDirections = directions,
+                 alpha = alpha)
+    wsir_project <- project_wSIR(wsir = wsir, newdata = as.matrix(exprs_test))
     output$wsir <- list(wsir$scores, wsir_project)
   }
   
@@ -150,7 +136,7 @@ extract_low_dim <- function(exprs_train,
   if (PCA) {
     pca <- pca_obj(X = exprs_train, varThreshold = varThreshold)
     pca_train <- pca$scores
-    pca_test <- project_WSIR(wsir = pca, newdata = exprs_test)
+    pca_test <- project_wSIR(wsir = pca, newdata = exprs_test)
     output$pca <- list(pca_train, pca_test)
   }
   
@@ -380,6 +366,79 @@ metric_corDist <- function(SIR = FALSE,
   return(corDists)
 }
 
+# neighbourhood similarity function and helper functions
+
+jaccard_compute <- function(low_dim_obj,
+                            coords_test,
+                            n_size = 50) {
+  
+  dr_methods <- names(low_dim_obj)
+  dist_true = dist(coords_test) # create true distance matrix
+  
+  true_neighbours <- find_neighbours(dist_true = dist_true, n = n_size) # compute n true neighbours
+  
+  jc_vals <- list()
+  if ("sir" %in% dr_methods) {
+    dist_dr_sir <- dist(low_dim_obj$sir[[2]]) %>% as.matrix()
+    jc_sir <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = dist_dr_sir)
+    jc_vals$sir <- mean(jc_sir)
+    
+  }
+  if ("wsir" %in% dr_methods) {
+    dist_dr_wsir <- dist(low_dim_obj$wsir[[2]]) %>% as.matrix()
+    jc_wsir <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = dist_dr_wsir)
+    jc_vals$wsir <- mean(jc_wsir)
+  }
+  if ("pca" %in% dr_methods) {
+    dist_dr_pca <- dist(low_dim_obj$pca[[2]]) %>% as.matrix()
+    jc_pca <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = dist_dr_pca)
+    jc_vals$pca <- mean(jc_pca)
+  }
+  if ("lda" %in% dr_methods) {
+    dist_dr_lda <- dist(low_dim_obj$lda[[2]]) %>% as.matrix()
+    jc_lda <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = dist_dr_lda)
+    jc_vals$lda <- mean(jc_lda)
+  }
+  if ("pls" %in% dr_methods) {
+    dist_dr_pls <- dist(low_dim_obj$pls[[2]]) %>% as.matrix()
+    jc_pls <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = dist_dr_pls)
+    jc_vals$pls <- mean(jc_pls)
+  }
+  
+  return(jc_vals)
+}
+
+jaccard <- function(a,b) {
+  int <- length(intersect(a,b))
+  union <- length(a) + length(b) - int
+  return(int/union)
+}
+
+jaccard_from_dmat <- function(neighbours_true, dist_dr) {
+  dist_dr <- dist_dr %>% as.matrix()
+  n_obs <- length(neighbours_true)
+  n <- length(neighbours_true[[1]])
+  
+  jc_dr <- rep(0, n_obs)
+  
+  for (i in 1:n_obs) {
+    neighbours_current <- neighbours_true[[i]]
+    neighbours_dr <- which.minn(dist_dr[i,], n)[-1]
+    jc_dr[i] <- jaccard(neighbours_dr, neighbours_current)
+  }
+  return(jc_dr)
+}
+
+find_neighbours <- function(dist_true, n) {
+  dist_true <- dist_true %>% as.matrix()
+  n = n+1 # if want 10 neighbours, need 11 closest as that includes itself
+  neighbours_true <- list()
+  for (i in 1:dim(dist_true)[1]) {
+    neighbours_true[[i]] <- which.minn(dist_true[i,], n)[-1]
+  }
+  return(neighbours_true)
+}
+
 # put it all together in a function (including train/test split, various metrics)
 
 analysis_all <- function(SIR = FALSE,
@@ -395,13 +454,13 @@ analysis_all <- function(SIR = FALSE,
                          GAM = FALSE,
                          distCor = FALSE,
                          corDist = FALSE,
+                         neighbourhood_similarity = FALSE,
                          KNN = FALSE,
                          k = 1,
                          nrep = 3,
                          plot_show = TRUE,
-                         alpha = 1,
-                         w01 = FALSE,
-                         thres = 0) {
+                         alpha = 4,
+                         n_size = 50) {
   
   # initialise results vectors
   
@@ -421,13 +480,19 @@ analysis_all <- function(SIR = FALSE,
   distCors_wsir <- rep(0, nrep)
   distCors_lda <- rep(0, nrep)
   distCors_pca <- rep(0, nrep)
-  distCors_pls <- rep(0, nrep) # this will not be filled
+  distCors_pls <- rep(0, nrep)
   
   corDists_sir <- rep(0, nrep)
   corDists_wsir <- rep(0, nrep)
   corDists_lda <- rep(0, nrep)
   corDists_pca <- rep(0, nrep)
-  corDists_pls <- rep(0, nrep) # this will not be filled
+  corDists_pls <- rep(0, nrep)
+  
+  jaccard_sir <- rep(0, nrep)
+  jaccard_wsir <- rep(0, nrep)
+  jaccard_lda <- rep(0, nrep)
+  jaccard_pca <- rep(0, nrep)
+  jaccard_pls <- rep(0, nrep)
   
   # perform analysis nrep times
   for(i in 1:nrep) {
@@ -453,9 +518,7 @@ analysis_all <- function(SIR = FALSE,
                                 PLS = PLS,
                                 varThreshold = varThreshold,
                                 directions = directions,
-                                alpha = alpha,
-                                w01 = w01,
-                                thres = thres)
+                                alpha = alpha)
     
     # calculate results from selected metric, save in relevant vectors
     ## GAM
@@ -561,6 +624,26 @@ analysis_all <- function(SIR = FALSE,
         corDists_pls[i] <- corDists$pls
       }
     }
+    if (neighbourhood_similarity) {
+      n_sims <- jaccard_compute(low_dim_obj = low_dims,
+                                coords_test = coords_test,
+                                n_size = n_size)
+      if (SIR) {
+        jaccard_sir[i] <- n_sims$sir
+      }
+      if (WSIR) {
+        jaccard_wsir[i] <- n_sims$wsir
+      }
+      if (LDA) {
+        jaccard_lda[i] <- n_sims$lda
+      }
+      if (PCA) {
+        jaccard_pca[i] <- n_sims$pca
+      }
+      if (PLS) {
+        jaccard_pls[i] <- n_sims$pls
+      }
+    }
   }
   
   # collect results into a dataframe
@@ -578,6 +661,9 @@ analysis_all <- function(SIR = FALSE,
   }
   if (KNN) {
     results_df$mse_KNN <- c(knn_mses_sir, knn_mses_wsir, knn_mses_lda, knn_mses_pca, knn_mses_pls)
+  }
+  if (neighbourhood_similarity) {
+    results_df$neighbourhood_similarity <- c(jaccard_sir, jaccard_wsir, jaccard_lda, jaccard_pca, jaccard_pls)
   }
   methods_used <- c("SIR"[SIR], "WSIR"[WSIR], "LDA"[LDA], "PCA"[PCA], "PLS"[PLS])
   results_df <- results_df[(results_df$method %in% methods_used),]
@@ -613,6 +699,13 @@ analysis_all <- function(SIR = FALSE,
         theme_classic() +
         ggtitle("MSE from KNN location predictor from DR methods with nrep iterations")
       output$figure_knn = plot_knn
+    }
+    if (neighbourhood_similarity) {
+      plot_nsim = ggplot(aes(x = method, y = neighbourhood_similarity), data = results_df) +
+        geom_point() +
+        theme_classic() +
+        ggtitle("jaccard index for neighbourhood similarity between DR methods with nrep iterations")
+      output$figure_nsim = plot_nsim
     }
   }
   
