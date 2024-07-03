@@ -1,4 +1,17 @@
-# Show genes with high/low loading in WSIR1 in barplot
+#' top_genes
+#'
+#' @description
+#' A function to find and visualise the genes with the highest (in absolute value) loading in WSIR1. These genes contribute the most to the first low-dimensional direction. 
+#'
+#' @param WSIR wsir object as output of wSIR function. If you want to analyse a different DR method, ensure the slot named 'directions' contains the loadings as a matrix and gene names as rownames (e.g could be PC directions)
+#' @param highest integer for how many of the top genes you would like to see. Recommend no more than 20 for ease of visualisation. Default is 10.
+#'
+#' @return plot 
+#'
+#' @examples
+#' # need example?
+#'
+#' @export
 
 top_genes <- function(WSIR, highest = 10) {
   
