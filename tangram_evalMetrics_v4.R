@@ -115,31 +115,32 @@ eval_metrics <- function(true_coords, pred_coords, celltypes, neighbor_num,
   
   if (spearCoef == TRUE) {
     # function to calculate Spearman's rank correlation coefficient.
-    # to check whether global cell-cell relationships can be captured.
-    true_rev_ind = apply(true_ind, 1, function(x){
-      y = data.frame(index = c(1:length(x)), cell_index = x) %>%
-        arrange(cell_index)
-      return(y$index)
-    })
-    tmpT_ind = melt(true_rev_ind)[, c(1,3)]
-    true_dist_un = matrix(true_dist[as.matrix(tmpT_ind)],
-                          nrow = nrow(true_dist),
-                          ncol = ncol(true_dist)) 
-    pred_rev_ind = apply(pred_ind, 1, function(x){
-      y = data.frame(index = c(1:length(x)), cell_index = x) %>%
-        arrange(cell_index)
-      return(y$index)
-    })
-    tmpP_ind = melt(pred_rev_ind)[, c(1,3)]
-    pred_dist_un = matrix(pred_dist[as.matrix(tmpP_ind)],
-                          nrow = nrow(pred_dist), 
-                          ncol = ncol(pred_dist))
-    spearman_df = data.frame(matrix(nrow = 0, ncol = 2))
-    colnames(spearman_df) = c("Correlation", "P_value")
-    for (i in c(1:lim)) {
-      corr = cor.test(pred_dist_un[i,], true_dist_un[i,], method = 'spearman')
-      spearman_df = rbind(spearman_df, cbind("Correlation" = corr$estimate, 
-                                             "P_value" = corr$p.value))
+    # to check whether global cell-cell relationships of each 
+    # celltype can be captured.
+    true_dist_un = as.matrix(dist(true_coords))
+    pred_dist_un = as.matrix(dist(pred_coords))
+    cell_df = data.frame(ID = 1:length(celltypes), 
+                         Celltype = factor(celltypes))
+    ct = unique(celltypes)
+    spearman_df = data.frame(matrix(nrow = 0, ncol = 3))
+    colnames(spearman_df) = c("Cell_index", "Correlation", "P_value")
+    for (i in ct) {
+      subID = cell_df[cell_df$Celltype == i, 1]
+      if (length(subID) == 1) {
+        # only one cell under a cell type
+        spearman_df = rbind(spearman_df, 
+                            cbind("Cell_index" = subID[1], 
+                                  "Correlation" = 0, 
+                                  "P_value" = 1))
+      } else {
+        for (j in subID) {
+          corr = cor.test(pred_dist_un[j, subID], true_dist_un[j, subID], method = 'spearman')
+          spearman_df = rbind(spearman_df, 
+                              cbind("Cell_index" = j,
+                                    "Correlation" = corr$estimate, 
+                                    "P_value" = corr$p.value))
+        }
+      }
     }
   } else {
     spearman_df = NULL
