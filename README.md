@@ -1,5 +1,7 @@
 # wSIR_2024
 
-# This is the repo for the function analysis codes - repo not to be published
+This is the repository for the function analysis codes to go along with the wSIR paper (link to be added). 
 
-# add test text
+The steps to reproduce the paper results are as follows:
+
+(to add) 
