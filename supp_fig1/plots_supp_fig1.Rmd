@@ -1,0 +1,53 @@
+---
+title: "plots_supp_fig1"
+author: '500455892'
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Plots for supp fig 1
+
+```{r}
+library(tidyverse)
+library(vctrs)
+```
+
+# Supplementary figure 1 - robustness to tile specification
+
+1A
+
+```{r}
+load("data/response_fig_data/bcdcs_vec.RData")
+rotation_vals <- c(0:8) * 10
+rotate_bcdc_df <- data.frame(bcdc = bcdcs_vec,
+                             angle = rep(rotation_vals, 10))
+rotate_coords_fig <- ggplot(rotate_bcdc_df, aes(x = as.factor(angle), y = bcdc)) +
+  geom_boxplot(colour = "black") +
+  theme_classic() +
+  labs(x = "Rotation Angle",
+       y = "BCDC") +
+  theme(text = element_text(size = 15))
+rotate_coords_fig
+ggsave(plot = rotate_coords_fig, filename = "figures/supp_fig1/rotate_coords_fig.pdf")
+```
+
+1B
+
+```{r}
+load("data/response_fig_data/shift_bcdc_vals.RData")
+shift_amounts <- c(0:9)/10
+bcdc_shift_df <- data.frame(bcdc = bcdc_vals,
+                            shift_amount = rep(shift_amounts, 10))
+shift_coords_fig <- ggplot(bcdc_shift_df, aes(x = as.factor(shift_amount), y = bcdc)) +
+  geom_boxplot(colour = "black") +
+  labs(x = expression(delta),
+       y = "BCDC") +
+  theme_classic() +
+  theme(text = element_text(size = 15))
+shift_coords_fig
+ggsave(plot = shift_coords_fig, filename = "figures/supp_fig1/shift_coords_fig.pdf")
+```
