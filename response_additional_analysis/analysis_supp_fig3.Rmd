@@ -1,0 +1,131 @@
+---
+title: "analysis_supp_fig3"
+output: html_document
+date: "2026-02-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+analysis for supp fig 3 trajectory analysis
+
+read files
+
+```{r}
+path_to_data <- "../../../../../nb/maximilw/thymus_visium_data"
+files <- list.files(path = path_to_data, full.names = TRUE)
+```
+
+```{r}
+sce_qc <- sapply(files, FUN = function(x) { # doing Na check, 0 check, logNorm in that order works
+  sce = readH5AD(x, X_name = "counts")
+
+  # normalise and QC
+  sce <- addPerCellQCMetrics(sce)
+  sce <- sce[,!is.na(sce$log1p_total_counts)]
+  sce <- sce[, colSums(counts(sce)) > 0]
+  sce <- logNormCounts(sce)
+  
+  return(sce)
+})
+
+merged_logcounts <- rbind(t(sce_qc[[1]]@assays@data$logcounts),
+      t(sce_qc[[2]]@assays@data$logcounts),
+      t(sce_qc[[3]]@assays@data$logcounts),
+      t(sce_qc[[4]]@assays@data$logcounts),
+      t(sce_qc[[5]]@assays@data$logcounts),
+      t(sce_qc[[6]]@assays@data$logcounts),
+      t(sce_qc[[7]]@assays@data$logcounts),
+      t(sce_qc[[8]]@assays@data$logcounts),
+      t(sce_qc[[9]]@assays@data$logcounts))
+n1 <- ncol(sce_qc[[1]])
+n2 <- ncol(sce_qc[[2]])
+n3 <- ncol(sce_qc[[3]])
+n4 <- ncol(sce_qc[[4]])
+n5 <- ncol(sce_qc[[5]])
+n6 <- ncol(sce_qc[[6]])
+n7 <- ncol(sce_qc[[7]])
+n8 <- ncol(sce_qc[[8]])
+n9 <- ncol(sce_qc[[9]])
+
+samples <- c(rep(1, n1),
+             rep(2, n2),
+             rep(3, n3),
+             rep(4, n4),
+             rep(5, n5),
+             rep(6, n6),
+             rep(7, n7),
+             rep(8, n8),
+             rep(9, n9))
+modelled_var <- modelGeneVar(t(merged_logcounts),
+                             block = samples)
+topgenes = scran::getTopHVGs(modelled_var, n = 500)
+merged_logcounts <- merged_logcounts[,topgenes]
+
+merged_coords <- rbind(reducedDim(sce_qc[[1]]),
+                       reducedDim(sce_qc[[2]]),
+                       reducedDim(sce_qc[[3]]),
+                       reducedDim(sce_qc[[4]]),
+                       reducedDim(sce_qc[[5]]),
+                       reducedDim(sce_qc[[6]]),
+                       reducedDim(sce_qc[[7]]),
+                       reducedDim(sce_qc[[8]]),
+                       reducedDim(sce_qc[[9]]))
+
+wsir_merged <- wSIR(X = merged_logcounts, 
+                    coords = merged_coords, 
+                    samples = samples,
+                    slices = 30,
+                    alpha = 0)
+
+umap_wsir <- umap::umap(wsir_merged$scores)
+plot(umap_wsir$layout, col = as.factor(samples), main = "UMAP on wSIR pre-harmony")
+wsir_hm <- RunHarmony(data_mat = wsir_merged$scores,
+                      meta_data = samples)
+umap_wsir_hm <- umap::umap(wsir_hm)
+plot(umap_wsir_hm$layout, col = as.factor(samples), main = "UMAP on wSIR post-harmony")
+
+sce_merged <- SingleCellExperiment(assays = list(logcounts = t(merged_logcounts)))
+reducedDim(sce_merged, "spatial") <- merged_coords
+reducedDim(sce_merged, "wSIR") <- wsir_hm
+sce_merged$cma_v2 <- c(sce_qc[[1]]$cma_v2,
+                       sce_qc[[2]]$cma_v2,
+                       sce_qc[[3]]$cma_v2,
+                       sce_qc[[4]]$cma_v2,
+                       sce_qc[[5]]$cma_v2,
+                       sce_qc[[6]]$cma_v2,
+                       sce_qc[[7]]$cma_v2,
+                       sce_qc[[8]]$cma_v2,
+                       sce_qc[[9]]$cma_v2)
+
+sce.sling <- slingshot(sce_merged, reducedDim='wSIR')
+rev_fn <- function(vec) {
+  m <- mean(vec)
+  ctd <- vec - mean(vec)
+  return(-ctd + m)
+}
+sce.sling$slingPseudotime_1 <- rev_fn(sce.sling$slingPseudotime_1)
+
+pca_merged <- prcomp(merged_logcounts)$x[,1:50]
+umap_pca <- umap::umap(pca_merged)
+plot(umap_pca$layout, col = as.factor(samples), main = "UMAP on PCA pre-harmony")
+pca_hm <- RunHarmony(data_mat = pca_merged,
+                     meta_data = samples)
+umap_pca_hm <- umap::umap(pca_hm)
+
+reducedDim(sce_merged, "PCA") <- pca_hm
+
+sce.sling_pca <- slingshot(sce_merged, reducedDim='PCA')
+```
+
+```{r}
+save(n1,n2,n3,n4,n5,n6,n7,n8,n9, file = "response_figs/response_fig_data/thymus_sample_sizes.RData")
+save(sce.sling_pca, file = "response_figs/response_fig_data/sce.sling_pca.RData")
+save(sce.sling, file = "response_figs/response_fig_data/sce.sling.RData")
+save(sce_merged, file = "response_figs/response_fig_data/sce_merged.RData")
+save(umap_pca_hm, file = "response_figs/response_fig_data/umap_pca_hm.RData")
+save(umap_wsir_hm, file = "response_figs/response_fig_data/umap_wsir_hm.RData")
+```
+
+

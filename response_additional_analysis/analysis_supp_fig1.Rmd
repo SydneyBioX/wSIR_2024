@@ -1,0 +1,153 @@
+---
+title: "analysis_supp_fig1"
+output: html_document
+date: "2026-02-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+script for supp fig 1
+
+# read data
+
+```{r}
+exprs_xb <- readRDS(file = "/enna/nobackup/maximilw/xenium_exprs.Rda")
+coords_xb <- readRDS(file = "/enna/nobackup/maximilw/xenium_coords.Rda") %>% as.data.frame()
+```
+
+# analysis
+
+create rotation bcdc
+
+```{r}
+bcdcs_vec <- c()
+nrep <- 10
+p_to_take <- 0.1
+rotation_vals <- c(0:8) * 10
+
+for (i in 1:nrep) {
+  rows_to_take <- sample(c(TRUE, FALSE), 
+                         size = nrow(coords_xb), 
+                         replace = TRUE,
+                         prob = c(p_to_take, 1-p_to_take))
+  sampled_exprs <- exprs_xb[rows_to_take,]
+  sampled_coords <- coords_xb[rows_to_take,]
+  
+  centre_point <- sampled_coords %>% colMeans()
+  for (theta in rotation_vals) {
+    print(paste0("Current theta: ", theta))
+    rotated_coords <- rotate_2d(sampled_coords, 
+                                degrees = theta, 
+                                x_col = "x", 
+                                y_col = "y",
+                                origin = centre_point) %>% select(c("x_rotated",
+                                                                    "y_rotated"))
+    wSIR_projected <- wSIR(X = sampled_exprs,
+                           coords = rotated_coords)$scores
+    current_bcdc <- energy::bcdcor(as.matrix(sampled_coords), wSIR_projected)
+    bcdcs_vec <- bcdcs_vec %>% append(current_bcdc)
+  }
+}
+save(bcdcs_vec, file = "response_figs/response_fig_data/bcdcs_vec.RData")
+```
+
+shifting
+
+```{r}
+wsir_shift <- function(exprs, coords, shift_amount, slices = 8, alpha = 4 ) {
+  # get unshifted labels
+  samples = rep(1, nrow(coords))
+  coords_split <- split.data.frame(coords, samples)
+  tile_allocations <- lapply(coords_split, 
+                           wSIR:::spatialAllocator, 
+                           slices = slices)
+  tile_allocation <- do.call(rbind, tile_allocations)
+  tile_allocation$coordinate <- paste0(tile_allocation$coordinate, 
+        ", ", as.integer(factor(samples)))
+  sliceName <- "coordinate"
+  labels <- tile_allocation[, sliceName, drop = FALSE] # this is original labels in correct format
+  
+  # compute shortest tile height and width (x and y gaps)
+  allocs <- labels$coordinate
+  alloc_x <- substr(allocs, 1, 1) # this only works if slices < 10 so each slice is one character
+  alloc_y <- substr(allocs, 4, 4) 
+
+  v_bounds <- c()
+  h_bounds <- c()
+  for (i in 1:7) {
+    xcoords1 <- coords[alloc_x == i,]
+    xcoords2 <- coords[alloc_x == (i+1),]
+    max1x <- max(xcoords1$x)
+    min2x <- min(xcoords2$x)
+    v_bounds[i] <- mean(max1x, min2x)
+    
+    ycoords1 <- coords[alloc_y == i,]
+    ycoords2 <- coords[alloc_y == (i+1),]
+    max1y <- max(ycoords1$y)
+    min2y <- min(ycoords2$y)
+    h_bounds[i] <- mean(max1y, min2y)
+  }
+
+  min_xgap <- min(diff(v_bounds))
+  min_ygap <- min(diff(h_bounds))
+
+  # new x and y allocations
+  cuttedx <- cut(coords$x, breaks = c(-Inf, v_bounds + min_xgap*shift_amount, Inf))
+  cuttedy <- cut(coords$y, breaks = c(-Inf, h_bounds + min_ygap*shift_amount, Inf))
+  
+  # turn x and y allocations into a tile number, e.g 11, 32, 73 etc
+  cuttedx_rename <- cuttedx
+  levels(cuttedx_rename) <- c(1:8)
+  cuttedy_rename <- cuttedy
+  levels(cuttedy_rename) <- c(1:8)
+  new_tilealloc <- paste0(cuttedx_rename, ", ", cuttedy_rename, ", 1")
+
+  # create tile_allocation df
+  new_alloc_matrix <- cbind(coords, new_tilealloc)
+  colnames(new_alloc_matrix)[3] <- 'coordinate'
+
+  # using tile_allocation, compute W matrix then run W and new labels in sir_categorical
+  sliceName <- "coordinate"
+  labels_new <- new_alloc_matrix[, sliceName, drop = FALSE]
+  H <- base::table(new_alloc_matrix$coordinate)
+  Dmatrix <- diag(sqrt(H)/nrow(coords), ncol = length(H))
+  corrMatrix <- wSIR:::createWeightMatrix(coords, 
+                                 labels = labels_new,
+                                 alpha = alpha)
+  W <- Dmatrix %*% corrMatrix %*% Dmatrix
+  wsir_obj <- wSIR:::sirCategorical(X = exprs, Y = new_alloc_matrix, W = W)
+  return(wsir_obj)
+}
+```
+
+```{r}
+bcdc_vals <- c()
+p_to_take <- 0.1
+shift_amounts <- c(0:9)/10
+nrep <- 10
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  # sample from data
+  rows_to_take <- sample(c(TRUE, FALSE), 
+                         size = nrow(coords_xb), 
+                         replace = TRUE,
+                         prob = c(p_to_take, 1-p_to_take))
+  sampled_exprs <- exprs_xb[rows_to_take,]
+  sampled_coords <- coords_xb[rows_to_take,]
+  
+  for (shift_amount in shift_amounts) {
+    print(paste0("Current shift amount: ", shift_amount))
+    # do shifting and get wSIR output
+    shift_out <- wsir_shift(exprs = sampled_exprs, 
+                            coords = sampled_coords, 
+                            shift_amount = shift_amount)
+    current_bcdc <- energy::bcdcor(sampled_coords, shift_out$scores)
+    bcdc_vals <- bcdc_vals %>% append(current_bcdc)
+  }
+}
+save(bcdc_vals, file = "response_figs/response_fig_data/shift_bcdc_vals.RData")
+```
+

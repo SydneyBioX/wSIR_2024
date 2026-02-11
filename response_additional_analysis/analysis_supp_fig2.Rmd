@@ -1,0 +1,143 @@
+---
+title: "analysis_supp_fig2"
+output: html_document
+date: "2026-02-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+scripts for supp fig 2: multisample improvement
+
+```{r}
+library(wSIR)
+library(tidyverse)
+library(energy)
+library(doBy)
+library(vctrs)
+```
+
+Load data
+```{r}
+# Packages needed to download data
+library(scran) # for logNormCounts
+library(MouseGastrulationData) # to download the data for this vignette
+
+
+seqfish_data_sample1 <- LohoffSeqFISHData(samples = c(1,2))
+seqfish_data_sample1 = logNormCounts(seqfish_data_sample1) # log transform variance stabilising
+rownames(seqfish_data_sample1) <- rowData(seqfish_data_sample1)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample1_exprs = t(assay(seqfish_data_sample1, "logcounts")) # extract matrix of gene expressions
+sample1_exprs_raw = t(assay(seqfish_data_sample1, "counts")) # extract counts of gene expressions
+sample1_coords = spatialCoords(seqfish_data_sample1)[,1:2] %>% as.data.frame()
+colnames(sample1_coords) = c("x", "y")
+
+seqfish_data_sample2 <- LohoffSeqFISHData(samples = c(3,4))
+seqfish_data_sample2 = logNormCounts(seqfish_data_sample2) # log transform variance stabilising
+rownames(seqfish_data_sample2) <- rowData(seqfish_data_sample2)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample2_exprs = t(assay(seqfish_data_sample2, "logcounts")) # extract matrix of gene expressions
+sample2_exprs_raw = t(assay(seqfish_data_sample2, "counts")) # extract counts of gene expressions
+sample2_coords = spatialCoords(seqfish_data_sample2)[,1:2] %>% as.data.frame()
+colnames(sample2_coords) = c("x", "y")
+
+seqfish_data_sample3 <- LohoffSeqFISHData(samples = c(5,6))
+seqfish_data_sample3 = logNormCounts(seqfish_data_sample3) # log transform variance stabilising
+rownames(seqfish_data_sample3) <- rowData(seqfish_data_sample3)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample3_exprs = t(assay(seqfish_data_sample3, "logcounts")) # extract matrix of gene expressions
+sample3_exprs_raw = t(assay(seqfish_data_sample3, "counts")) # extract counts of gene expressions
+sample3_coords = spatialCoords(seqfish_data_sample3)[,1:2] %>% as.data.frame()
+colnames(sample3_coords) = c("x", "y")
+```
+
+analysis
+
+```{r}
+nreps <- 10
+bcdcs_vec <- c()
+nsim_means_vec <- c()
+nsim_sds_vec <- c()
+n_props <- c(0.005, 0.01, 0.05, 0.1, 0.2)
+
+for (i in 1:nreps) {
+  print(paste0("current iteration: ", i))
+  s1 <- sample(c(TRUE, FALSE), 
+               replace = TRUE, 
+               size = nrow(sample1_coords), 
+               prob = c(0.2,0.8))
+  s2 <- sample(c(TRUE, FALSE), 
+               replace = TRUE, 
+               size = nrow(sample2_coords), 
+               prob = c(0.2,0.8))
+  s3 <- sample(c(TRUE, FALSE), 
+               replace = TRUE, 
+               size = nrow(sample3_coords), 
+               prob = c(0.2,0.8))
+  exprs_set <- list(sample1_exprs[s1,], 
+                    sample2_exprs[s2,], 
+                    sample3_exprs[s3,])
+  coords_set <- list(sample1_coords[s1,], 
+                     sample2_coords[s2,], 
+                     sample3_coords[s3,])
+  for (test_set in c(1:3)) {
+    print(paste0("current test set: ", test_set))
+    exprs_test = exprs_set[[test_set]]
+    coords_test = coords_set[[test_set]]
+  
+    # find indices for both test sets given the training set index
+    train1 <- (test_set %% 3) + 1
+    train2 <- ((test_set+1) %% 3) + 1
+  
+    exprs_train1 <- exprs_set[[train1]]
+    exprs_train2 <- exprs_set[[train2]]
+  
+    coords_train1 <- coords_set[[train1]]
+    coords_train2 <- coords_set[[train2]]
+  
+    wsir_combined <- wSIR(X = rbind(exprs_train1, exprs_train2),
+                          coords = rbind(coords_train1, coords_train2),
+                          samples = c(rep(1,nrow(coords_train1)),
+                                      rep(2,nrow(coords_train2))))
+    wsir1 <- wSIR(X = exprs_train1,
+                  coords = coords_train1)
+    wsir2 <- wSIR(X = exprs_train2,
+                  coords = coords_train2)
+  
+    proj_combined <- projectWSIR(wsir = wsir_combined,
+                                 newdata = exprs_test)
+    proj1 <- projectWSIR(wsir = wsir1,
+                         newdata = exprs_test)
+    proj2 <- projectWSIR(wsir = wsir2,
+                         newdata = exprs_test)
+
+    low_dims <- list(proj_combined, proj1, proj2)
+    coords_list <- list(coords_test, coords_test, coords_test) # this is input since some methods remove some points, so function needs to have capability of different size coords
+    current_n <- nrow(coords_test)
+    nsizes <- floor(current_n * n_props) # calculate neighbourhood sizes = current_n * proportions vector
+    jc_out <- jaccard_lowdim(low_dims = low_dims,
+                             coords_list = coords_list,
+                             n_vals = nsizes)
+    jc_means <- lapply(jc_out, FUN = function(mat) { # mean is in row 1 of jaccard_lowdim output
+      return(mat[1,])
+    }) %>% unlist()
+    jc_sds <- lapply(jc_out, FUN = function(mat) { # sd is in row 2 
+      return(mat[2,])
+    }) %>% unlist()
+    nsim_means_vec <- nsim_means_vec %>% append(jc_means)
+    nsim_sds_vec <- nsim_sds_vec %>% append(jc_sds)
+  
+    bcdc_combined <- energy::bcdcor(proj_combined, as.matrix(coords_test))
+    bcdc_1 <- energy::bcdcor(proj1, as.matrix(coords_test))
+    bcdc_2 <- energy::bcdcor(proj2, as.matrix(coords_test))
+    bcdcs_vec <- bcdcs_vec %>% append(c(bcdc_combined, bcdc_1, bcdc_2))
+  }
+}
+bcdcs_multisample <- bcdcs_vec
+nsim_means_multisample <- nsim_means_vec
+nsim_sds_multisample <- nsim_sds_vec
+save(bcdcs_multisample, file = "response_figs/response_fig_data/bcdcs_multisample.RData")
+save(nsim_means_multisample, file = "response_figs/response_fig_data/nsim_means_multisample.RData")
+save(nsim_sds_multisample, file = "response_figs/response_fig_data/nsim_sds_multisample.RData")
+```
+
+
