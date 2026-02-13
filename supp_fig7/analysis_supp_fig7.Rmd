@@ -12,4 +12,356 @@ knitr::opts_chunk$set(echo = TRUE)
 analysis supp 7
 
 
+```{r}
+library(tidyverse)
+library(scuttle)
+library(Seurat)
+library(SeuratObject)
+library(PRECAST)
+library(wSIR)
+library(DR.SC)
+library(SpatialPCA)
+library(vctrs)
+library(doBy)
+library(nnet) # multinom function
+library(DescTools) # PseudoR2 function
+source("spatial_benchmark_functions.R")
+```
+
+```{r}
+githubURL <- "https://github.com/feiyoung/PRECAST/blob/main/vignettes_data/data_simu.rda?raw=true"
+download.file(githubURL,"data_simu.rda",mode='wb')
+
+load("data_simu.rda")
+# sample 1
+precast_sim1_coords <- cbind(data_simu[[1]]$row, data_simu[[1]]$col)
+data_simu[[1]]
+precast_sim1_counts <- data_simu[[1]]@assays$RNA$counts
+precast_sim1_exprs <- t(LogNormalize(precast_sim1_counts))
+# sample 2
+precast_sim2_coords <- cbind(data_simu[[2]]$row, data_simu[[2]]$col)
+precast_sim2_counts <- data_simu[[2]]@assays$RNA$counts
+precast_sim2_exprs <- t(LogNormalize(precast_sim2_counts))
+# sample 3
+precast_sim3_coords <- cbind(data_simu[[3]]$row, data_simu[[3]]$col)
+precast_sim3_counts <- data_simu[[3]]@assays$RNA$counts
+precast_sim3_exprs <- t(LogNormalize(precast_sim3_counts))
+
+# save sample sizes
+n1 <- nrow(precast_sim1_coords)
+n2 <- nrow(precast_sim2_coords)
+n3 <- nrow(precast_sim3_coords)
+# save spatial domains
+precast_sim1_domains <- data_simu[[1]]$true_cluster
+precast_sim2_domains <- data_simu[[2]]$true_cluster
+precast_sim3_domains <- data_simu[[3]]$true_cluster
+```
+
+STAMP
+
+setup
+```{r}
+use_python("/Library/Frameworks/Python.framework/Versions/3.8/bin/python3")
+test_file <- "stamp_wrapper.py" # available in supp fig 1 folder
+source_python(test_file)
+
+stamp_wrapper_complete <- function(X, coords) {
+  out <- stamp_wrapper_fn(counts = as.matrix(X), 
+                          coordinates = coords)
+  stamp_cells_taken <- as.numeric(out[[2]]) + 1 # +1 since python 0-indexed
+  stamp_coords_taken <- coords[stamp_cells_taken,]
+  return(list(embedding = out[[1]],
+              coords = stamp_coords_taken))
+}
+```
+
+run stamp
+```{r}
+stamp_out1 <- stamp_wrapper_complete(X = t(precast_sim1_counts),
+                                     coords = as.matrix(precast_sim1_coords))
+stamp_coords1 <- precast_sim1_coords[(rownames(precast_sim1_coords) %in% rownames(stamp_out1$coords)),]
+stamp_bcdc1 <- energy::bcdcor(stamp_out1$embedding, stamp_coords1)
+
+stamp_out2 <- stamp_wrapper_complete(X = t(precast_sim2_counts),
+                                     coords = as.matrix(precast_sim2_coords))
+stamp_coords2 <- precast_sim2_coords[(rownames(precast_sim2_coords) %in% rownames(stamp_out2$coords)),]
+stamp_bcdc2 <- energy::bcdcor(stamp_out2$embedding, stamp_coords2)
+
+stamp_out3 <- stamp_wrapper_complete(X = t(precast_sim3_counts),
+                                     coords = as.matrix(precast_sim3_coords))
+stamp_coords3 <- precast_sim3_coords[(rownames(precast_sim3_coords) %in% rownames(stamp_out3$coords)),]
+stamp_bcdc3 <- energy::bcdcor(stamp_out3$embedding, stamp_coords3)
+
+jc_stamp1 <- jaccard_lowdim(low_dims = list(stamp_out1$embedding),
+                            coords_list = list(stamp_coords1),
+                            n_vals = n_sizes1)
+jc_stamp2 <- jaccard_lowdim(low_dims = list(stamp_out2$embedding),
+                            coords_list = list(stamp_coords2),
+                            n_vals = n_sizes2)
+jc_stamp3 <- jaccard_lowdim(low_dims = list(stamp_out3$embedding),
+                            coords_list = list(stamp_coords3),
+                            n_vals = n_sizes3)
+```
+
+
+Other methods
+
+```{r}
+precast_out1 <- precast_wrapper(exprs = precast_sim1_exprs,
+                                coords = precast_sim1_coords)
+precast_out2 <- precast_wrapper(exprs = precast_sim2_exprs,
+                                coords = precast_sim2_coords)
+precast_out3 <- precast_wrapper(exprs = precast_sim3_exprs,
+                                coords = precast_sim3_coords)
+
+drsc_out1 <- drsc_wrapper(exprs = precast_sim1_exprs,
+                          coords = precast_sim1_coords)
+drsc_out2 <- drsc_wrapper(exprs = precast_sim2_exprs,
+                          coords = precast_sim2_coords)
+drsc_out3 <- drsc_wrapper(exprs = precast_sim3_exprs,
+                          coords = precast_sim3_coords)
+
+spca_out1 <- spca_wrapper(counts = precast_sim1_counts,
+                          coords = precast_sim1_coords)
+spca_out2 <- spca_wrapper(counts = precast_sim2_counts,
+                          coords = precast_sim2_coords)
+spca_out3 <- spca_wrapper(counts = precast_sim3_counts,
+                          coords = precast_sim3_coords)
+
+wsir_out <- wSIR(X = rbind(precast_sim1_exprs,
+                           precast_sim2_exprs,
+                           precast_sim3_exprs),
+                 coords = rbind(precast_sim1_coords,
+                                precast_sim2_coords,
+                                precast_sim3_coords),
+                 samples = c(rep(1,nrow(precast_sim1_coords)),
+                             rep(2,nrow(precast_sim2_coords)),
+                             rep(3,nrow(precast_sim3_coords))))
+n1 <- nrow(precast_sim1_coords)
+n2 <- nrow(precast_sim2_coords)
+n3 <- nrow(precast_sim3_coords)
+```
+
+```{r}
+bcdcs1 <- c(energy::bcdcor(precast_out1, precast_sim1_coords),
+            energy::bcdcor(drsc_out1, precast_sim1_coords),
+            energy::bcdcor(spca_out1$projected, precast_sim1_coords),
+            energy::bcdcor(wsir_out$scores[1:n1,], precast_sim1_coords))
+bcdcs2 <- c(energy::bcdcor(precast_out2, precast_sim2_coords),
+            energy::bcdcor(drsc_out2, precast_sim2_coords),
+            energy::bcdcor(spca_out2$projected, precast_sim2_coords),
+            energy::bcdcor(wsir_out$scores[(n1+1):(n1+n2),], precast_sim2_coords))
+bcdcs3 <- c(energy::bcdcor(precast_out3, precast_sim3_coords),
+            energy::bcdcor(drsc_out3, precast_sim3_coords),
+            energy::bcdcor(spca_out3$projected, precast_sim3_coords),
+            energy::bcdcor(wsir_out$scores[(n1+n2+1):(n1+n2+n3),], precast_sim3_coords))
+```
+
+```{r}
+precast_sim_bcdc_df <- data.frame(bcdc = c(bcdcs1, stamp_bcdc1, bcdcs2, stamp_bcdc2, bcdcs3, stamp_bcdc3),
+                                  method = rep(c("PRECAST", "DR.SC", "SpatialPCA", "wSIR", "STAMP"),3),
+                                  sample = as.factor(vec_rep_each(c(1:3),5)))
+save(precast_sim_bcdc_df, file = "precast_sim_bcdc_df.RData")
+```
+
+nsim
+
+```{r}
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+n_sizes1 <- floor(n_props * nrow(precast_sim1_coords))
+n_sizes2 <- floor(n_props * nrow(precast_sim2_coords))
+n_sizes3 <- floor(n_props * nrow(precast_sim3_coords))
+
+lowdims_list_s1 <- list(wsir_out$scores[1:n1,],
+                        precast_out1,
+                        drsc_out1,
+                        spca_out1$projected)
+lowdims_list_s2 <- list(wsir_out$scores[(n1+1):(n1+n2),],
+                        precast_out2,
+                        drsc_out2,
+                        spca_out2$projected)
+lowdims_list_s3 <- list(wsir_out$scores[(n1+n2+1):(n1+n2+n3),],
+                        precast_out3,
+                        drsc_out3,
+                        spca_out3$projected)
+
+coords_list_s1 <- list(precast_sim1_coords,precast_sim1_coords,precast_sim1_coords,precast_sim1_coords)
+coords_list_s2 <- list(precast_sim2_coords,precast_sim2_coords,precast_sim2_coords,precast_sim2_coords)
+coords_list_s3 <- list(precast_sim3_coords,precast_sim3_coords,precast_sim3_coords,precast_sim3_coords)
+
+jc_out1 <- jaccard_lowdim(low_dims = lowdims_list_s1,
+                          coords_list = coords_list_s1,
+                          n_vals = n_sizes1)
+jc_out2 <- jaccard_lowdim(low_dims = lowdims_list_s2,
+                          coords_list = coords_list_s2,
+                          n_vals = n_sizes2)
+jc_out3 <- jaccard_lowdim(low_dims = lowdims_list_s3,
+                          coords_list = coords_list_s3,
+                          n_vals = n_sizes3)
+
+precast_sim_nsim_df <- data.frame(nsim = c(jc_out1[[1]][1,],
+                                           jc_out1[[2]][1,],
+                                           jc_out1[[3]][1,],
+                                           jc_out1[[4]][1,],
+                                           jc_stamp1[[1]][1,],
+                                           jc_out2[[1]][1,],
+                                           jc_out2[[2]][1,],
+                                           jc_out2[[3]][1,],
+                                           jc_out2[[4]][1,],
+                                           jc_stamp2[[1]][1,],
+                                           jc_out3[[1]][1,],
+                                           jc_out3[[2]][1,],
+                                           jc_out3[[3]][1,],
+                                           jc_out3[[4]][1,],
+                                           jc_stamp3[[1]][1,]),
+                                  sample = as.factor(vec_rep_each(c(1:3), length(n_props)*5)),
+                                  method = rep(vec_rep_each(c("wSIR", 
+                                                              "PRECAST",
+                                                              "DR.SC",
+                                                              "SpatialPCA",
+                                                              "STAMP"), length(n_props)), 3),
+                                  n_size = as.factor(100*rep(n_props, 3*5)))
+save(precast_sim_nsim_df, file = "precast_sim_nsim_df.RData")
+```
+
+pseudo-R2
+
+```{r}
+precastsim_embeddinglist1 <- list(wsir_out_scaled$scores[1:n1,],
+                                  drsc_out1,
+                                  precast_out1,
+                                  spca_out1$projected,
+                                  stamp_out1$embedding)
+precastsim_embeddinglist2 <- list(wsir_out_scaled$scores[(n1+1):(n1+n2),],
+                                  drsc_out2,
+                                  precast_out2,
+                                  spca_out2$projected,
+                                  stamp_out2$embedding)
+precastsim_embeddinglist3 <- list(wsir_out_scaled$scores[(n1+n2+1):(n1+n2+n3),],
+                                  drsc_out3,
+                                  precast_out3,
+                                  spca_out3$projected,
+                                  stamp_out3$embedding)
+
+precastsim_psR2_list1 <- lapply(precastsim_embeddinglist1, function(embedding) {
+  ncols <- ncol(embedding) # get number of columns in this embedding
+  norms <- apply(embedding, 2, function(col) sqrt(sum(col^2))) # get vector of magnitudes of each column
+  psR2_vals <- c()
+  for (number_cols_to_take in 1:ncols) {
+    if (ncols >40) { # if wSIR just take the first d columns rather than the d columns with largest L2 norm
+      cols_to_take <- c(1:number_cols_to_take)
+    } else {
+      cols_to_take <- which.maxn(norms, number_cols_to_take)
+    }
+    selected_embedding <- as.matrix(embedding[,cols_to_take])
+    current_fit <- multinom(precast_sim1_domains ~ selected_embedding, 
+                            maxit = 1000, 
+                            MaxNWts = 2000,
+                            model = TRUE, 
+                            verbose = FALSE)
+    current_psR2 <- PseudoR2(current_fit, c("McFaddenAdj"))
+    psR2_vals <- psR2_vals %>% append(current_psR2)
+  }
+  return(psR2_vals)
+})
+precastsim_psR2_list2 <- lapply(precastsim_embeddinglist2, function(embedding) {
+  ncols <- ncol(embedding) # get number of columns in this embedding
+  norms <- apply(embedding, 2, function(col) sqrt(sum(col^2))) # get vector of magnitudes of each column
+  psR2_vals <- c()
+  for (number_cols_to_take in 1:ncols) {
+    if (ncols == 50) { # if wSIR just take the first d columns rather than the d columns with largest L2 norm
+      cols_to_take <- c(1:number_cols_to_take)
+    } else {
+      cols_to_take <- which.maxn(norms, number_cols_to_take)
+    }
+    selected_embedding <- as.matrix(embedding[,cols_to_take])
+    current_fit <- multinom(precast_sim2_domains ~ selected_embedding, 
+                            maxit = 1000, 
+                            MaxNWts = 2000,
+                            model = TRUE, 
+                            verbose = FALSE)
+    current_psR2 <- PseudoR2(current_fit, c("McFaddenAdj"))
+    psR2_vals <- psR2_vals %>% append(current_psR2)
+  }
+  return(psR2_vals)
+})
+precastsim_psR2_list3 <- lapply(precastsim_embeddinglist3, function(embedding) {
+  ncols <- ncol(embedding) # get number of columns in this embedding
+  norms <- apply(embedding, 2, function(col) sqrt(sum(col^2))) # get vector of magnitudes of each column
+  psR2_vals <- c()
+  for (number_cols_to_take in 1:ncols) {
+    if (ncols == 50) { # if wSIR just take the first d columns rather than the d columns with largest L2 norm
+      cols_to_take <- c(1:number_cols_to_take)
+    } else {
+      cols_to_take <- which.maxn(norms, number_cols_to_take)
+    }
+    selected_embedding <- as.matrix(embedding[,cols_to_take])
+    current_fit <- multinom(precast_sim3_domains ~ selected_embedding, 
+                            maxit = 1000, 
+                            MaxNWts = 2000,
+                            model = TRUE, 
+                            verbose = FALSE)
+    current_psR2 <- PseudoR2(current_fit, c("McFaddenAdj"))
+    psR2_vals <- psR2_vals %>% append(current_psR2)
+  }
+  return(psR2_vals)
+})
+
+ncomp_vals <- lapply(precastsim_psR2_list1, function(psR2list) {
+  return(1:length(psR2list))
+}) %>% unlist()
+method_names <- c("wSIR", "DR.SC", "PRECAST", "SpatialPCA", "STAMP")
+method_vals <- c()
+for (i in 1:length(precastsim_psR2_list1)) {
+  current_psR2list <- precastsim_psR2_list1[[i]]
+  current_methodname <- method_names[i]
+  method_vals <- method_vals %>% append(rep(current_methodname, length(current_psR2list)))
+}
+precastsim_psr2_df <- data.frame(psR2_s1 = unlist(precastsim_psR2_list1),
+                                 psR2_s2 = unlist(precastsim_psR2_list2),
+                                 psR2_s3 = unlist(precastsim_psR2_list3),
+                                 method = method_vals,
+                                 ncomp = ncomp_vals)
+save(precastsim_psr2_df, file = "precastsim_psr2_df.RData")
+```
+
+# UMAPs
+
+```{r}
+precastsim_embeddinglist1_forumap <- list(wsir_out_scaled$scores[1:n1,1:10],
+                                  drsc_out1,
+                                  precast_out1,
+                                  spca_out1$projected,
+                                  stamp_out1$embedding)
+precastsim_embeddinglist2_forumap <- list(wsir_out_scaled$scores[(n1+1):(n1+n2),1:10],
+                                  drsc_out2,
+                                  precast_out2,
+                                  spca_out2$projected,
+                                  stamp_out2$embedding)
+precastsim_embeddinglist3_forumap <- list(wsir_out_scaled$scores[(n1+n2+1):(n1+n2+n3),1:10],
+                                  drsc_out3,
+                                  precast_out3,
+                                  spca_out3$projected,
+                                  stamp_out3$embedding)
+
+umaps_out_s1 <- lapply(precastsim_embeddinglist1_forumap, function(embedding) {
+  umap_out <- umap::umap(embedding)
+  return(umap_out$layout)
+})
+
+umaps_out_s2 <- lapply(precastsim_embeddinglist2_forumap, function(embedding) {
+  umap_out <- umap::umap(embedding)
+  return(umap_out$layout)
+})
+
+umaps_out_s3 <- lapply(precastsim_embeddinglist3_forumap, function(embedding) {
+  umap_out <- umap::umap(embedding)
+  return(umap_out$layout)
+})
+save(umaps_out_s1, file = "umaps_out_s1.RData")
+save(umaps_out_s2, file = "umaps_out_s2.RData")
+save(umaps_out_s3, file = "umaps_out_s3.RData")
+```
+
+
 
