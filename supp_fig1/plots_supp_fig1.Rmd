@@ -1,0 +1,57 @@
+---
+title: "plots_supp_fig1"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(vctrs)
+library(tidyverse)
+```
+
+
+```{r}
+load("comp_time_df.RData")
+computation_colours <- c("PRECAST" = "darkgreen",
+                         "DRSC" = "green3",
+                         "STAMP" = "orange2",
+                         "wSIR" = "blue",
+                         "LDA" = "lightgrey",
+                         "PCA" = "burlywood1",
+                         "PLS" = "darkgrey",
+                         "SpatialPCA" = "orangered3")
+options("scipen"=10) # this makes x axis show 100000 instead of 1e5
+computation_time_fig <- comp_time_df %>% ggplot(aes(x = as.factor(size), y = log(time), colour = method, group = method)) +
+  geom_point() +
+  theme_classic() +
+  theme(text = element_text(size = 15),
+        legend.position = "bottom") +
+  labs(x = "Dataset size",
+       y = "Computational time ln(seconds)",
+       colour = "") +
+  geom_line() +
+  scale_colour_manual(values = computation_colours)
+computation_time_fig
+ggsave(plot = computation_time_fig, filename = "response_figs/supp_fig1/computation_time_fig.pdf")
+
+computation_memory_fig <- comp_time_df %>% ggplot(aes(x = as.factor(size), y = log(memory), colour = method, group = method)) +
+  geom_point() +
+  theme_classic() +
+  theme(text = element_text(size = 15),
+        legend.position = "bottom") +
+  labs(x = "Dataset size",
+       y = "Memory usage ln(bytes)",
+       colour = "") +
+  geom_line() +
+  scale_colour_manual(values = computation_colours)
+computation_memory_fig
+ggsave(plot = computation_memory_fig, filename = "response_figs/supp_fig1/computation_memory_fig.pdf")
+```
+
+
+
