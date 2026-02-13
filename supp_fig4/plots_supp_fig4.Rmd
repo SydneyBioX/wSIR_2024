@@ -1,0 +1,115 @@
+---
+title: "plots_supp_fig4"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+plots for supp fig 4 multisample improvement
+
+```{r}
+library(vctrs)
+library(tidyverse)
+```
+
+```{r}
+load("bcdcs_multisample.RData")
+load("nsim_means_multisample.RData")
+load("nsim_sds_multisample.RData")
+test_sets_bcdc <- c() # each test_set loop, 3 bcdc values are createdd
+test_sets_nsim <- c() # each loop, 3*length(n_prop) nsim values are created
+train_sets_bcdc <- c()
+train_sets_nsim <- c()
+nsizes_nsim <- c()
+for (test_set in c(1:3)) {
+  # find indices for both test sets given the training set index
+  train1 <- (test_set %% 3) + 1
+  train2 <- ((test_set+1) %% 3) + 1
+  current_train_vec <- c(paste0(train1, ",", train2), train1, train2)
+  train_sets_bcdc <- train_sets_bcdc %>% append(current_train_vec)
+  test_sets_bcdc <- test_sets_bcdc %>% append(rep(test_set, 3))
+}
+```
+
+2A
+
+```{r}
+bcdcs_means <- c()
+bcdcs_sds <- c()
+for (i in 1:9) { # want to have each element of bcdcs_means be mean of i, i+9, i+18, ... 
+  current_vals <- bcdcs_multisample[seq(from = i, by = 9, length.out = 10)]
+  bcdcs_means[i] <- mean(current_vals)
+  bcdcs_sds[i] <- sd(current_vals)
+}
+bcdcs_bs_df <- data.frame(mean = bcdcs_means,
+                          sd = bcdcs_sds,
+                          train = train_sets_bcdc, # run line ~150 for this # this is now in prev chunk
+                          test = test_sets_bcdc)
+bcdcs_bs_df$ntrain <- as.factor(rep(c(2,1,1), 3))
+custom_order = c("1,2", "3,1", "2,3", "1", "2", "3")
+multisample_bcdc_fig <- ggplot(bcdcs_bs_df, aes(x = factor(train, levels = custom_order), 
+                        y = mean,
+                        fill = ntrain)) +
+  facet_wrap(~test, scales = "free_x") +
+  geom_col(width = 0.6, colour = "black") +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.4) +
+  theme_classic() +
+  labs(x = "Training set", 
+       y = "Bias corrected distance correlation") +
+  theme(legend.position = "none",
+        text = element_text(size = 15)) +
+  scale_fill_manual(values = c("2" = "blue3", "1" = "lightblue"))
+multisample_bcdc_fig
+ggsave(plot = multisample_bcdc_fig, filename = "response_figs/supp_fig4/multisample_bcdc_fig.pdf")
+```
+
+2B
+
+```{r}
+nsim_bs_means <- c()
+nsim_bs_sds <- c()
+n_props <- c(0.005, 0.01, 0.05, 0.1, 0.2)
+
+for (i in 1:45) {
+  current_means <- nsim_means_multisample[seq(from = i, by = 45, length.out = 10)]
+  nsim_bs_means[i] <- mean(current_means)
+  nsim_bs_sds[i] <- sd(current_means)
+}
+nsim_bs_df <- data.frame(mean = nsim_bs_means,
+                         sd = nsim_bs_sds,
+                         test_set = vec_rep_each(c(1,2,3),15),
+                         props = rep(n_props, 9),
+                         train_set = as.factor(vec_rep_each(train_sets_bcdc,5)))
+multisample_nsim_fig <- ggplot(nsim_bs_df, aes(x = props, y = mean, colour = train_set)) +
+  geom_line() +
+  facet_wrap(~test_set, scales = "free_y") +
+  theme_classic() +
+  labs(x = "Proportion of test set that is neighbourhood size",
+       y = "Mean jaccard value",
+       colour = "Training set") +
+  scale_colour_manual(values = c("1" = "lightblue", 
+                                 "2" = "lightblue",
+                                 "3" = "lightblue",
+                                 "1,2" = "blue3",
+                                 "2,3" = "blue3",
+                                 "3,1" = "blue3")) +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd, fill = train_set), 
+              alpha = 0.2,
+              colour = NA) +
+  scale_fill_manual(values = c("1" = "lightblue", 
+                                 "2" = "lightblue",
+                                 "3" = "lightblue",
+                                 "1,2" = "blue3",
+                                 "2,3" = "blue3",
+                                 "3,1" = "blue3")) +
+  guides(fill = "none") +
+  theme(text = element_text(size = 15),
+        legend.position = "bottom")
+multisample_nsim_fig
+ggsave(plot = multisample_nsim_fig, filename = "response_figs/supp_fig4/multisample_nsim_fig.pdf")
+```
+
