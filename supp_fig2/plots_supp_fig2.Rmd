@@ -21,7 +21,7 @@ library(vctrs)
 1A
 
 ```{r}
-load("data/response_fig_data/bcdcs_vec.RData")
+load("bcdcs_vec.RData")
 rotation_vals <- c(0:8) * 10
 rotate_bcdc_df <- data.frame(bcdc = bcdcs_vec,
                              angle = rep(rotation_vals, 10))
@@ -38,7 +38,7 @@ ggsave(plot = rotate_coords_fig, filename = "figures/supp_fig1/rotate_coords_fig
 1B
 
 ```{r}
-load("data/response_fig_data/shift_bcdc_vals.RData")
+load("shift_bcdc_vals.RData")
 shift_amounts <- c(0:9)/10
 bcdc_shift_df <- data.frame(bcdc = bcdc_vals,
                             shift_amount = rep(shift_amounts, 10))

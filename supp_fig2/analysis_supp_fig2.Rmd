@@ -8,9 +8,11 @@ date: "2026-02-11"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-script for supp fig 1
+script for supp fig 2 (rotation and shifting)
 
 # read data
+
+Will need to update file path to access the data. Follow instructions in data availability section of manuscript to access data files. 
 
 ```{r}
 exprs_xb <- readRDS(file = "/enna/nobackup/maximilw/xenium_exprs.Rda")
@@ -50,7 +52,8 @@ for (i in 1:nrep) {
     bcdcs_vec <- bcdcs_vec %>% append(current_bcdc)
   }
 }
-save(bcdcs_vec, file = "response_figs/response_fig_data/bcdcs_vec.RData")
+#save(bcdcs_vec, file = "response_figs/response_fig_data/bcdcs_vec.RData")
+#save(bcdcs_vec, file = "bcdcs_vec.RData")
 ```
 
 shifting
@@ -148,6 +151,7 @@ for (i in 1:nrep) {
     bcdc_vals <- bcdc_vals %>% append(current_bcdc)
   }
 }
-save(bcdc_vals, file = "response_figs/response_fig_data/shift_bcdc_vals.RData")
+#save(bcdc_vals, file = "response_figs/response_fig_data/shift_bcdc_vals.RData")
+#save(bcdc_vals, file = "shift_bcdc_vals.RData")
 ```
 
