@@ -1,0 +1,196 @@
+---
+title: "plots_supp_fig7"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+plots supp 7
+
+Nsim
+
+```{r}
+dlpfc_colours <- c("SpatialPCA" = "orangered3",
+                   "PRECAST" = "darkgreen",
+                   "DR.SC" = "green3",
+                   "STAMP" = "orange2",
+                   "wSIR" = "blue")
+load("precast_sim_nsim_df.RData")
+precastsim_nsim_plot <- ggplot(precast_sim_nsim_df, aes(x = n_size, y = nsim, colour = method, group = method)) +
+  geom_line() +
+  facet_wrap(~sample) +
+  scale_colour_manual(values = dlpfc_colours) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  labs(x = "Neighbourhood size as percentage of test set",
+       y = "Jaccard index",
+       colour = "DR method") +
+  theme(text = element_text(size = 15))
+ggsave(plot = precastsim_nsim_plot, filename = "precastsim_nsim_plot.pdf")
+```
+
+BCDC
+
+```{r}
+benchmark_colours <- c("SpatialPCA" = "lightgrey",
+                       "PRECAST" = "grey",
+                       "DR.SC" = "darkgrey",
+                       "STAMP" = "grey1",
+                       "wSIR" = "blue")
+load("precast_sim_bcdc_df.RData")
+precastsim_bcdc_plot <- ggplot(precast_sim_bcdc_df, aes(x = method, y = bcdc, fill = method)) +
+  geom_col(colour = "black", width = 0.7) +
+  facet_wrap(~sample) +
+  theme_classic() +
+  theme(legend.position = NULL,
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = benchmark_colours) +
+  theme(legend.position = "none",
+        text = element_text(size = 15)) +
+  labs(x = "Method", y = "Bias-corrected distance correation")
+ggsave(plot = precastsim_bcdc_plot, filename = "precastsim_bcdc_plot.pdf")
+```
+
+Pseudo-R2 curves
+
+```{r}
+load("precastsim_psr2_df.RData")
+dlpfc_colours <- c("SpatialPCA" = "orangered3",
+                   "PRECAST" = "darkgreen",
+                   "DR.SC" = "green3",
+                   "STAMP" = "orange2",
+                   "wSIR" = "blue")
+precatsim_psR2_plot1 <- ggplot(precastsim_psr2_df, aes(x = ncomp, y = psR2_s1, colour = method)) +
+  geom_line() +
+  theme_classic() + 
+  labs(x = "Number of components", y = "Pseudo-R2", colour = "DR method") +
+  scale_colour_manual(values = dlpfc_colours) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15))
+precatsim_psR2_plot2 <- ggplot(precastsim_psr2_df, aes(x = ncomp, y = psR2_s2, colour = method)) +
+  geom_line() +
+  theme_classic() + 
+  labs(x = "Number of components", y = "Pseudo-R2", colour = "DR method") +
+  scale_colour_manual(values = dlpfc_colours) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15))
+precatsim_psR2_plot3 <- ggplot(precastsim_psr2_df, aes(x = ncomp, y = psR2_s3, colour = method)) +
+  geom_line() +
+  theme_classic() + 
+  labs(x = "Number of components", y = "Pseudo-R2", colour = "DR method") +
+  scale_colour_manual(values = dlpfc_colours) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15))
+ggsave(plot = precatsim_psR2_plot1, filename = "precastsim_psR2_plot1.pdf")
+ggsave(plot = precatsim_psR2_plot2, filename = "precastsim_psR2_plot2.pdf")
+ggsave(plot = precatsim_psR2_plot3, filename = "precastsim_psR2_plot3.pdf")
+```
+
+
+UMAPs, spatial plots, figure legend
+
+```{r}
+library(Seurat)
+load("umaps_out_s1.RData")
+load("umaps_out_s2.RData")
+load("umaps_out_s3.RData")
+githubURL <- "https://github.com/feiyoung/PRECAST/blob/main/vignettes_data/data_simu.rda?raw=true"
+download.file(githubURL,"data_simu.rda",mode='wb')
+load("data_simu.rda")
+# sample 1
+precast_sim1_coords <- cbind(data_simu[[1]]$row, data_simu[[1]]$col)
+data_simu[[1]]
+precast_sim1_counts <- data_simu[[1]]@assays$RNA$counts
+precast_sim1_exprs <- t(LogNormalize(precast_sim1_counts))
+# sample 2
+precast_sim2_coords <- cbind(data_simu[[2]]$row, data_simu[[2]]$col)
+precast_sim2_counts <- data_simu[[2]]@assays$RNA$counts
+precast_sim2_exprs <- t(LogNormalize(precast_sim2_counts))
+# sample 3
+precast_sim3_coords <- cbind(data_simu[[3]]$row, data_simu[[3]]$col)
+precast_sim3_counts <- data_simu[[3]]@assays$RNA$counts
+precast_sim3_exprs <- t(LogNormalize(precast_sim3_counts))
+
+# save sample sizes
+n1 <- nrow(precast_sim1_coords)
+n2 <- nrow(precast_sim2_coords)
+n3 <- nrow(precast_sim3_coords)
+# save spatial domains
+precast_sim1_domains <- data_simu[[1]]$true_cluster
+precast_sim2_domains <- data_simu[[2]]$true_cluster
+precast_sim3_domains <- data_simu[[3]]$true_cluster
+```
+
+```{r}
+precastsim_full_umap_df <- data.frame(x = c(unlist(lapply(umaps_out_s1, function(x)return(x[,1]))),
+                                            unlist(lapply(umaps_out_s2, function(x)return(x[,1]))),
+                                            unlist(lapply(umaps_out_s3, function(x)return(x[,1])))),
+                                      y = c(unlist(lapply(umaps_out_s1, function(x)return(x[,2]))),
+                                            unlist(lapply(umaps_out_s2, function(x)return(x[,2]))),
+                                            unlist(lapply(umaps_out_s3, function(x)return(x[,2])))),
+                                      domain = c(rep(precast_sim1_domains,5),
+                                                 rep(precast_sim2_domains,5),
+                                                 rep(precast_sim3_domains,5)),
+                                      sample = c(rep("Sample 1", n1*5),
+                                                 rep("Sample 2", n2*5),
+                                                 rep("Sample 3", n3*5)),
+                                      method = c(vec_rep_each(c("wSIR", "DR.SC", "PRECAST", "SpatialPCA", "STAMP"), n1),
+                                                 vec_rep_each(c("wSIR", "DR.SC", "PRECAST", "SpatialPCA", "STAMP"), n2),
+                                                 vec_rep_each(c("wSIR", "DR.SC", "PRECAST", "SpatialPCA", "STAMP"), n3)))
+precastsim_full_umap_df$method_sample <- paste0(precastsim_full_umap_df$method, " ", precastsim_full_umap_df$sample)
+
+umap_plot_full <- ggplot(precastsim_full_umap_df, aes(x = x, y = y, colour = as.factor(domain))) +
+  geom_point(size = 0.5) +
+  theme_classic() +
+  facet_wrap(~method_sample, nrow = 5, scales = "free") +
+  labs(x = "UMAP 1",
+       y = "UMAP 2") +
+  theme(legend.position = "none",
+        text = element_text(size = 12))
+ggsave(plot = umap_plot_full, filename = "umap_plot_full.pdf", width = 6, height = 10)
+```
+
+```{r}
+precastsim_spatialplot <- ggplot(data.frame(x = c(precast_sim1_coords[,1],
+                                                  precast_sim2_coords[,1],
+                                                  precast_sim3_coords[,1]),
+                                            y = c(precast_sim1_coords[,2],
+                                                  precast_sim2_coords[,2],
+                                                  precast_sim3_coords[,2]),
+                                            domain = c(precast_sim1_domains,
+                                                       precast_sim2_domains,
+                                                       precast_sim3_domains),
+                                            sample = c(rep("Sample 1", n1),
+                                                       rep("Sample 2", n2),
+                                                       rep("Sample 3", n3))),
+                                  aes(x = x, y = y, colour = as.factor(domain))) +
+  geom_point(size = 0.5) +
+  theme_classic() +
+  theme(legend.position = "none",
+        text = element_text(size = 12)) +
+  labs(x = "Spatial 1", y = "Spatial 2") +
+  facet_wrap(~sample)
+ggsave(plot = precastsim_spatialplot, filename = "precastsim_spatialplot.pdf", width = 6, height = 2)
+```
+
+```{r}
+library(cowplot)
+legend_domains <- get_legend(ggplot(data.frame(x = umaps_out_s1[[1]][,1],
+                  y = umaps_out_s1[[1]][,2],
+                  domain = precast_sim1_domains),
+       aes(x = x, y = y, colour = as.factor(domain))) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "UMAP 1",
+       y = "UMAP 2",
+       colour = "Spatial domain") +
+  theme(legend.position = "bottom"))
+domain_legend_plot <- plot_grid(legend_domains)
+ggsave(plot = domain_legend_plot, filename = "domain_legend_plot.pdf")
+```
+
+
