@@ -1,0 +1,175 @@
+---
+title: "plots_main_fig2"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Plots for main fig 2: donut simulation, parameter robustness, benchmarking wSIR vs spatial methods
+
+# Donut simulation
+
+# Parameter robustness
+
+Embryo
+
+```{r}
+bc_dc_params_train3test1_df <- readRDS(file = "embryo_results_bc_dc_params_train3test1_df.Rds")
+
+embryo_ewp_bc_dc_plot <- ggplot(bc_dc_params_train3test1_df, aes(x = alpha, y = slices, fill = bc_distcor)) +
+  geom_tile() +
+  theme_classic() +
+  labs(x = "Alpha",
+       y = "Number of slices", 
+       fill = "Bias corrected distance correlation") +
+  ggtitle("") +
+  scale_fill_viridis_c(name = "") +
+  theme(legend.position="bottom") +
+  guides(fill = guide_colourbar(
+    title = "BCDC",
+    theme = theme(
+    legend.key.width  = unit(10, "lines")
+  ))) + 
+  theme(aspect.ratio = 1) + 
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15))
+
+embryo_ewp_bc_dc_plot
+
+ggsave(plot = embryo_ewp_bc_dc_plot, filename = "fig2_plots_raw/embryo_ewp_plot.pdf", width = 9)
+```
+
+Xenium
+
+```{r}
+xenium_results_bc_dc_params <- readRDS(file = "xenium_results_bc_dc_params.Rds")
+
+xenium_bc_dc_ewp_plot <- ggplot(xenium_results_bc_dc_params, aes(x = alpha, y = slices, fill = bc_distcor)) +
+  geom_tile() +
+  theme_classic() +
+  labs(x = "Alpha", y = "Number of slices") +
+  scale_fill_viridis_c(name = "") +
+  theme(legend.position="bottom") +
+  guides(fill = guide_colourbar(title = "BCDC", theme = 
+                                  theme(legend.key.width  = unit(10, "lines")
+                                        )
+                                )
+         ) + 
+  
+  theme(aspect.ratio = 1) + 
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15))
+
+         
+xenium_bc_dc_ewp_plot
+
+ggsave(plot = xenium_bc_dc_ewp_plot, filename = "fig2_plots_raw/xenium_bc_dc_ewp_plot.pdf", width = 10)
+```
+
+# Benchmarking
+
+Embryo
+
+```{r}
+load("bcdc_all_df.RData")
+bcdc_all_plot <- ggplot(bcdc_all_df, aes(x = reorder(method, mean), 
+                                         y = mean, 
+                                         fill = method)) +
+  geom_col(width = 0.8) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.5) +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5)) +
+  facet_wrap(~sample) +
+  labs(x = "DR method", y = "Bias-corrected distance correlation") +
+  scale_fill_manual(values = benchmark_colours) +
+  theme(legend.position = "")
+bcdc_all_plot
+```
+
+```{r}
+load("nsim_df.RData")
+
+benchmark_colours <- c("SpatialPCA" = "grey",
+                       "PRECAST" = "lightgrey",
+                       "DR.SC" = "darkgrey",
+                       "STAMP" = "grey2",
+                       "wSIR" = "blue")
+nsim_all_plot <- ggplot(nsim_df, aes(x = 100*n_prop, y = means, colour = method)) + 
+  geom_line() +
+  facet_wrap(~sample) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  geom_ribbon(aes(x = 100*n_prop, ymin = means - sds, ymax = means + sds, fill = method),
+              colour = NA, alpha = 0.2) +
+  labs(x = "Percent of dataest used as neighbourhood size",
+       colour = "DR method",
+       fill = "DR method",
+       y = "Mean jaccard index value") +
+  scale_fill_manual(values = benchmark_colours) + 
+  scale_colour_manual(values = benchmark_colours)
+nsim_all_plot
+ggsave(nsim_all_plot, filename = "benchmark_embeddings/nsim_all_plot.pdf")
+```
+
+Xenium Breast Cancer
+
+```{r}
+load("nsim_xb1_df.RData")
+load("bcdc_xb1_df.RData")
+load("nsim_xb2_df.RData")
+load("bcdc_xb2_df.RData")
+
+nsim_xball_df <- rbind(nsim_xb1_df, nsim_xb2_df)
+nsim_xball_df$sample <- vec_rep_each(c("Sample 1", "Sample 2"),20)
+
+benchmark_colours <- c("PRECAST" = "lightgrey",
+                       "DR.SC" = "darkgrey",
+                       "STAMP" = "grey2",
+                       "wSIR" = "blue")
+nsim_xball_plot <- ggplot(nsim_xball_df, aes(x = 100*n_prop, y = means, colour = method)) + 
+  geom_line() +
+  facet_wrap(~sample) +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15)) +
+  geom_ribbon(aes(x = 100*n_prop, ymin = means - sds, ymax = means + sds, fill = method),
+              colour = NA, alpha = 0.2) +
+  labs(x = "Percent of dataset used as neighbourhood size",
+       colour = "DR method",
+       fill = "DR method",
+       y = "Mean jaccard index value") +
+  scale_fill_manual(values = benchmark_colours) + 
+  scale_colour_manual(values = benchmark_colours)
+nsim_xball_plot
+ggsave(nsim_xball_plot, filename = "benchmark_xb1/nsim_xball_plot.pdf")
+```
+
+```{r}
+bcdc_xball_df <- rbind(bcdc_xb1_df, bcdc_xb2_df)
+bcdc_xball_df$sample <- vec_rep_each(c("Sample 1", "Sample 2"),4)
+
+bcdc_xball_plot <- ggplot(bcdc_xball_df, aes(x = reorder(method, mean), 
+                                         y = mean, 
+                                         fill = method)) +
+  geom_col(width = 0.8) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.5) +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5)) +
+  facet_wrap(~sample) +
+  labs(x = "DR method", y = "Bias-corrected distance correlation") +
+  scale_fill_manual(values = benchmark_colours) +
+  theme(legend.position = "",
+        text = element_text(size = 15))
+bcdc_xball_plot
+ggsave(bcdc_xball_plot, filename = "benchmark_xb1/bcdc_xball_plot.pdf")
+```
+
+
+
+

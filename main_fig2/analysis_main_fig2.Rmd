@@ -1,0 +1,208 @@
+---
+title: "analysis_main_fig2"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(wSIR)
+library(tidyverse)
+```
+
+
+Analysis for main fig 2: donut simulation, parameter robustness, benchmarking wSIR vs spatial methods
+
+# Donut simulation
+
+# Parameter robustness
+
+```{r}
+load("MouseData.Rdata")
+coords1 <- coords_list[[1]]
+coords3 <- coords_list[[3]]
+exprs1 <- exprs_logcount_list[[1]]
+exprs3 <- exprs_logcount_list[[3]]
+alpha_vals <- c(0,4,8,15,30,50)
+slice_vals <- c(5,10,15,20,30,50)
+
+# Define parameters
+alpha_vals <- c(0, 4, 8, 15, 30, 50)
+slice_vals <- c(5, 10, 15, 20, 30, 50)
+nrep <- 5
+
+# Precompute lengths
+n_alpha <- length(alpha_vals)
+n_slices <- length(slice_vals)
+
+# Preallocate the bc_dcs vector
+total_iterations <- n_alpha * n_slices * nrep
+bc_dcs <- numeric(total_iterations)
+
+# Parallelized loop using mclapply
+results <- lapply(seq_along(alpha_vals), function(a_idx) {
+  alpha <- alpha_vals[a_idx]
+  cat(sprintf("Current alpha: %d\n", alpha))
+  
+  sapply(seq_along(slice_vals), function(s_idx) {
+    slices <- slice_vals[s_idx]
+    cat(sprintf("  Current slices: %d\n", slices))
+    
+    replicate(nrep, {
+      # Random sampling
+      rsample1 <- sample(c(TRUE, FALSE), replace = TRUE, size = nrow(coords1), prob = c(0.8, 0.2))
+      rsample3 <- sample(c(TRUE, FALSE), replace = TRUE, size = nrow(coords3), prob = c(0.8, 0.2))
+      
+      # Subsetting
+      exprs_train <- exprs3[rsample3, ]
+      coords_train <- coords3[rsample3, ]
+      exprs_test <- exprs1[rsample1, ]
+      coords_test <- coords1[rsample1, ]
+      
+      # Create wSIR object and calculate bc_dcs
+      wsir_obj <- wSIR:::wSIRSpecifiedParams(X = exprs_train,
+                                             coords = coords_train,
+                                             alpha = alpha,
+                                             slices = slices,
+                                             varThreshold = 0.95)
+      projected <- projectWSIR(wsir = wsir_obj, newdata = exprs_test)
+      bc_distCor(projected, coords_test)
+    })
+  })
+})
+
+# Flatten the results into the bc_dcs vector
+
+```
+
+```{r}
+# each column is one alpha, and each row is one slice
+bc_dcs_avg <- sapply(results, colMeans)
+bc_dc_params_train3test1_df <- data.frame(bc_distcor = c(bc_dcs_avg),
+                                          alpha = factor(rep(alpha_vals, each = 6)),
+                                          slices = factor(rep(slice_vals, 6)))
+
+ggplot(bc_dc_params_train3test1_df, aes(x = alpha, y = slices, fill = bc_distcor)) +
+  geom_tile() +
+  scale_fill_viridis_c()
+
+saveRDS(bc_dc_params_train3test1_df, file = "embryo_results_bc_dc_params_train3test1_df.Rds")
+```
+
+Xenium breast cancer
+
+First need to preprocess the data
+
+```{r setup, include=FALSE}
+library(reticulate)
+use_python("/Library/Frameworks/Python.framework/Versions/3.12/bin/python3")
+source_python("graphPCA_wrap.py")
+knitr::opts_chunk$set(echo = TRUE)
+source("comparison_functions2.R")
+```
+
+Note the xenium data files are too large for github. To run this code, please see the data availability section of the paper and download the data from there. 
+
+```{r, eval=F}
+# Step 1: Load the .h5ad file
+spe <- anndata::read_h5ad("../../data/xenium_rep1.h5ad")
+
+# Step 2: Add per-cell QC metrics
+# Assuming raw counts are stored in "X"
+spe$obs$total <- rowSums(spe$X)
+spe$obs$detected <- rowSums(spe$X > 0)
+
+# Step 3: Filter cells based on QC metrics
+filtered_cells <- spe$obs$total >= 10 & spe$obs$detected >= 5
+spe <- spe[filtered_cells, ]
+
+# Step 4: Examine cluster composition and subset to "Stromal" cells
+cluster_counts <- table(spe$obs$Cluster) # Cluster composition
+sorted_cluster_counts <- sort(cluster_counts) # Sorted cluster composition
+stromal_cells <- spe$obs$Cluster == "Stromal" # Logical vector for "Stromal" cells
+spe <- spe[stromal_cells, ]
+
+counts_raw <- spe$X # Save the raw counts data for graphPCA
+spe2 <- AnnData2SCE(spe)
+spe2 <- logNormCounts(spe2, exprs_values = "X")
+
+# Step 6: Save raw expression data and spatial coordinates
+exprs_raw = t(assay(spe2, "logcounts"))
+coords_raw = as.data.frame(reducedDim(spe2, "spatial"))
+save(counts_raw, exprs_raw, coords_raw, file = "xenium_data.Rdata")
+```
+
+Begin analysis
+
+```{r}
+load("xenium_data.Rdata")
+
+# Define parameters
+alpha_vals <- c(0, 4, 8, 15, 30, 50)
+slice_vals <- c(5, 10, 15, 20, 30, 50)
+nrep <- 5
+
+# Precompute lengths
+n_alpha <- length(alpha_vals)
+n_slices <- length(slice_vals)
+
+# Preallocate the bc_dcs vector
+total_iterations <- n_alpha * n_slices * nrep
+bc_dcs <- numeric(total_iterations)
+
+# Parallelized loop using mclapply
+results <- lapply(seq_along(alpha_vals), function(a_idx) {
+  alpha <- alpha_vals[a_idx]
+  cat(sprintf("Current alpha: %d\n", alpha))
+  
+  sapply(seq_along(slice_vals), function(s_idx) {
+    slices <- slice_vals[s_idx]
+    cat(sprintf("  Current slices: %d\n", slices))
+    
+    replicate(nrep, {
+      # Random sampling
+      rsample1 <- sample(c(TRUE, FALSE), replace = TRUE, size = nrow(coords_raw), prob = c(0.8, 0.2))
+      
+      # Subsetting
+      exprs_train <- exprs_raw[rsample1, ]
+      coords_train <- coords_raw[rsample1, ]
+      exprs_test <- exprs_raw[!rsample1, ]
+      coords_test <- coords_raw[!rsample1, ]
+      
+      # Create wSIR object and calculate bc_dcs
+      wsir_obj <- wSIR:::wSIRSpecifiedParams(X = exprs_train,
+                                             coords = coords_train,
+                                             alpha = alpha,
+                                             slices = slices,
+                                             varThreshold = 0.95)
+      projected <- wSIR:::projectWSIR(wsir = wsir_obj, newdata = exprs_test)
+      bc_distCor(projected, coords_test)
+    })
+  })
+})
+
+# Flatten the results into the bc_dcs vector
+
+```
+
+```{r}
+# each column is one alpha, and each row is one slice
+bc_dcs_avg <- sapply(results, colMeans)
+bc_dc_params_train3test1_df <- data.frame(bc_distcor = c(bc_dcs_avg),
+                                          alpha = factor(rep(alpha_vals, each = 6)),
+                                          slices = factor(rep(slice_vals, 6)))
+
+ggplot(bc_dc_params_df, aes(x = alpha, y = slices, fill = bc_distcor)) +
+  geom_tile() +
+  scale_fill_viridis_c()
+
+saveRDS(bc_dc_params_df, file = "xenium_results_bc_dc_params.Rds")
+```
+
+# Benchmarking
+
+
