@@ -1,0 +1,182 @@
+---
+title: "analysis_supp_fig3"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+analysis scripts for supp fig 3: comparison of wSIR vs non-spatial-specific methods
+
+```{r setup, include=FALSE}
+library(reticulate)
+use_python("/Library/Frameworks/Python.framework/Versions/3.12/bin/python3")
+source_python("graphPCA_wrap.py")
+knitr::opts_chunk$set(echo = TRUE)
+source("comparison_functions2.R")
+```
+
+# Embryo
+
+```{r}
+prop_neighbors <- c(0.5, 1, 5, 10, 20)/100
+Niteration <- 5
+load("MouseData.Rdata")
+#coords_list <- lapply(coords_list, as.matrix)
+all_results <- vector("list", 5)
+
+for (iteration in 1:Niteration) {
+  print(paste0("Current iteration: ", iteration))
+  
+  keep_sets <- lapply(coords_list, function(coords) 
+      sample(c(TRUE, FALSE), size = nrow(coords), replace = TRUE, prob = c(0.8, 0.2)))
+  
+  exprs_set <- mapply(function(dat, index) dat[index, ], exprs_logcount_list, keep_sets, SIMPLIFY = F) 
+  coords_set <- mapply(function(dat, index) dat[index, ], coords_list, keep_sets, SIMPLIFY = F)
+  count_set <- mapply(function(dat, index) dat[index, ], exprs_count_list, keep_sets, SIMPLIFY = F)
+
+  all_res <- lapply(seq_along(coords_list), function(train_set){
+    print(paste("Current train set: ", train_set))
+  
+    count_train = count_set[[train_set]]
+    exprs_train = exprs_set[[train_set]]
+    coords_train = coords_set[[train_set]]
+  
+    # find indices for both test sets given the training set index
+    test_sets <- setdiff(seq_along(exprs_set), train_set)
+    
+    metric_results <- sapply(test_sets, function(test_set) {
+       ldo <- create_low_dim(
+          count_train = count_train,
+          exprs_train = exprs_train,
+          coords_train = coords_train,
+          exprs_test = exprs_set[[test_set]],
+          count_test = count_set[[test_set]],
+          coords_test = coords_set[[test_set]],
+          SIR = TRUE, WSIR = TRUE, PCA = TRUE, LDA = TRUE, PLS = TRUE, GPCA = TRUE, optim_params = FALSE, alpha = 4, slices = 10, verbose = TRUE        )
+       # bc_dc_metrics
+       bc_metrics <- metric_bc_distCor(ldo[[1]], as.matrix(coords_set[[test_set]])) 
+       
+       # jaccard metric
+       # I think it only makes sense to consider number of neighbors as a proportion of observations on the test set, so now I do 0.5%, 1%, 5%, 10%, 20%
+       n_sizes = round(prop_neighbors * nrow(coords_set[[test_set]]))
+       
+       all_jaccard <- lapply(seq_along(n_sizes), function(j){
+          neighbors = n_sizes[j] 
+          dist_true <- distances::distances(as.matrix(coords_set[[test_set]]))
+          neighbor_true <- apply(dist_true, 1, doBy::which.minn, n = neighbors,
+                              simplify = F)
+          all_neighbor_est <- lapply(ldo[[1]], function(onemethod){
+              low_dim_methods <- onemethod[[2]]
+              dist_object <- distances::distances(low_dim_methods)
+              all_neighbor_est <- apply(dist_object, 1, doBy::which.minn, n = neighbors, simplify = F)
+              jaccard <- mapply(function(x, y) length(intersect(x, y))/length(union(x, y)), all_neighbor_est, neighbor_true)
+              v <- c(mean(jaccard), sd(jaccard))
+              names(v) <- paste(c("m", "sd"), j, sep =".")
+              return(v)
+         })
+          return(all_neighbor_est)
+       })
+       
+      c(Train = train_set, test = test_set, dc = unlist(bc_metrics), 
+          jaccard = unlist(all_jaccard))
+})
+  })
+  all_results[[iteration]] <- Reduce("cbind", all_res)
+}
+save(all_results, file = "embryo_allmethods_comparisons.Rds")
+```
+
+# Xenium
+
+NOTE: the xenium breast cancer data files are too large to include in this github repository. Please see the data availability section of the paper for instructions on how to download the data. 
+
+```{r, eval=F}
+# Step 1: Load the .h5ad file
+spe <- anndata::read_h5ad("../../data/xenium_rep1.h5ad")
+
+# Step 2: Add per-cell QC metrics
+# Assuming raw counts are stored in "X"
+spe$obs$total <- rowSums(spe$X)
+spe$obs$detected <- rowSums(spe$X > 0)
+
+# Step 3: Filter cells based on QC metrics
+filtered_cells <- spe$obs$total >= 10 & spe$obs$detected >= 5
+spe <- spe[filtered_cells, ]
+
+# Step 4: Examine cluster composition and subset to "Stromal" cells
+cluster_counts <- table(spe$obs$Cluster) # Cluster composition
+sorted_cluster_counts <- sort(cluster_counts) # Sorted cluster composition
+stromal_cells <- spe$obs$Cluster == "Stromal" # Logical vector for "Stromal" cells
+spe <- spe[stromal_cells, ]
+
+counts_raw <- spe$X # Save the raw counts data for graphPCA
+spe2 <- AnnData2SCE(spe)
+spe2 <- logNormCounts(spe2, exprs_values = "X")
+
+# Step 6: Save raw expression data and spatial coordinates
+exprs_raw = t(assay(spe2, "logcounts"))
+coords_raw = as.data.frame(reducedDim(spe2, "spatial"))
+save(counts_raw, exprs_raw, coords_raw, file = "xenium_data.Rdata")
+```
+
+Create results
+
+```{r}
+prop_neighbors <- c(0.5, 1, 5, 10, 20)/100
+Niteration <- 5
+#coords_list <- lapply(coords_list, as.matrix)
+all_results <- vector("list", Niteration)
+
+for (iteration in 1:Niteration) {
+  print(paste0("Current iteration: ", iteration))
+  
+  rsample1 <- sample(c(TRUE, FALSE), replace = TRUE, size = nrow(coords_raw), prob = c(0.8, 0.2))
+      
+  # Subsetting
+  exprs_train <- exprs_raw[rsample1, ]
+  coords_train <- coords_raw[rsample1, ]
+  counts_train <- counts_raw[rsample1, ]
+  exprs_test <- exprs_raw[!rsample1, ]
+  coords_test <- coords_raw[!rsample1, ]
+  counts_test <- counts_raw[!rsample1, ]
+ 
+  ldo <- create_low_dim(
+          count_train = counts_train,
+          exprs_train = exprs_train,
+          coords_train = coords_train,
+          exprs_test = exprs_test,
+          coords_test = coords_test,
+          count_test = counts_test,
+          SIR = TRUE, WSIR = TRUE, PCA = TRUE, LDA = TRUE, PLS = TRUE, GPCA = TRUE, optim_params = FALSE, alpha = 4, slices = 10, verbose = TRUE        )
+       # bc_dc_metrics
+  bc_metrics <- metric_bc_distCor(ldo[[1]], as.matrix(coords_test))
+       
+       # jaccard metric
+     
+    n_sizes = round(prop_neighbors * nrow(coords_test))
+       
+    all_jaccard <- lapply(seq_along(n_sizes), function(j){
+          neighbors = n_sizes[j] 
+          dist_true <- distances::distances(as.matrix(coords_test))
+          neighbor_true <- apply(dist_true, 1, doBy::which.minn, n = neighbors,
+                              simplify = F)
+          all_neighbor_est <- lapply(ldo[[1]], function(onemethod){
+              low_dim_methods <- onemethod[[2]]
+              dist_object <- distances::distances(low_dim_methods)
+              all_neighbor_est <- apply(dist_object, 1, doBy::which.minn, n = neighbors, simplify = F)
+              jaccard <- mapply(function(x, y) length(intersect(x, y))/length(union(x, y)), all_neighbor_est, neighbor_true)
+              v <- c(mean(jaccard), sd(jaccard))
+              names(v) <- paste(c("m", "sd"), j, sep =".")
+              return(v)
+    })
+          return(all_neighbor_est)
+    })
+       
+     all_results[[iteration]] <-  c(dc = unlist(bc_metrics), jaccard = unlist(all_jaccard))
+}
+save(all_results, file = "xenium_allmethods_comparisons.Rdata")
+```

@@ -1,0 +1,247 @@
+---
+title: "plots_supp_fig3"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+fig2_colours <- c("LDA" = "lightgrey",
+                  "PCA" = "burlywood1",
+                  "PLS" = "darkgrey",
+                  "SIR" = "lightblue",
+                  "GPCA" = "burlywood4",
+                  "WSIR" = "blue")
+set_colours = scale_fill_manual(values = fig2_colours)
+```
+
+
+Plots for supp fig 3: comparison of wSIR vs non-spatial-specific methods
+
+# Embryo
+
+BCDC
+
+```{r}
+load("embryo_allmethods_comparisons.Rdata")
+library(abind)
+array_results <- abind(all_results, along = 3)
+df_results_mean <- apply(array_results, 1:2, mean)
+df_results_sd <- apply(array_results, 1:2, sd)
+
+embryo_dr_avg_bc_dc_df <- data.frame(t(df_results_mean)) %>%
+  dplyr::select(Train, test, contains("dc")) %>%
+  rename_with(~ str_replace(., "^dc", "mean"))
+
+embryo_dr_sd_bc_dc_df <-  data.frame(t(df_results_sd)) %>%
+  dplyr::select(contains("dc")) %>%
+  rename_with(~ str_replace(., "^dc", "sd"))
+```
+
+```{r}
+dc_results_only <- cbind(embryo_dr_avg_bc_dc_df, 
+                          embryo_dr_sd_bc_dc_df) %>%
+  pivot_longer(cols = starts_with(c("mean", "sd")), 
+               names_to = c(".value", "method"),
+               names_sep = "\\.") %>%
+  mutate(split = paste0("Train on sample ", Train, ", Test on sample ", test)) %>%
+  mutate(method = toupper(method)) %>%
+  mutate(method = factor(method, levels = c("PCA", "GPCA", "LDA", "PLS", "SIR", "WSIR")))
+
+embryo_bc_dc_plot <- ggplot(dc_results_only, aes(x = method, y = mean, fill = method)) +
+  geom_col(width = 0.8) +
+  facet_wrap(~split, nrow = 3) +
+  geom_errorbar(data = dc_results_only, aes(x = method, ymin = mean-sd, ymax = mean+sd), width = 0.5) +
+  labs(x = "DR method", y = "BCDC") +
+  theme_classic() +
+  theme(legend.position = "") +
+  set_colours +
+  ggtitle("") +
+  scale_x_discrete(labels = c("PCA", "GPCA", "LDA", "PLS", "wSIR(0)", "wSIR")) +
+  theme(strip.background = element_blank()) + 
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15)) + 
+  theme(strip.text = element_text(size = 20)) +
+  # theme(= element_text(angle = 45, hjust = 0, vjust = 0.5)) + 
+  NULL
+
+embryo_bc_dc_plot
+
+ggsave(plot = embryo_bc_dc_plot, 
+       filename = "fig2_plots_raw/embryo_bc_dc_plot.pdf", width = 12)
+```
+
+neighbourhood similarity
+
+```{r}
+jaccard_mean_df <- data.frame(t(df_results_mean)) %>%
+  dplyr::select(Train, test, contains("jaccard")) %>%
+  dplyr::select(Train, test, contains("m.")) %>%
+  rename_with(~str_remove(., "^jaccard."))
+
+jaccard_sd_df <- data.frame(t(df_results_sd)) %>%
+  dplyr::select(contains("jaccard")) %>%
+  dplyr::select(contains("m.")) %>%
+  rename_with(~ str_remove(., "^jaccard.")) %>%
+  rename_with(~ str_replace(., "m.", "sd."))
+
+jaccard_df <- cbind(jaccard_mean_df, jaccard_sd_df)
+
+embryo_nsims_allcombos_df <- jaccard_df %>% pivot_longer(cols = -c(1, 2), 
+               names_to = c("method", ".value", "neighbor"),
+               names_sep = "\\.") %>%
+  group_by(Train, test, neighbor) %>%
+  mutate(ratio = m/m[method == "pca"]) %>%
+  mutate(split = paste0("Train on sample ", Train, ", Test on sample ", test)) %>%
+  mutate(method = toupper(method)) %>%
+  mutate(neighbor = case_when(neighbor=="1" ~ 0.5, neighbor =="2" ~ 1, neighbor == "3" ~ 5, neighbor == "4" ~ 10, neighbor == "5" ~ 20)) %>%
+  mutate(method = factor(method, levels = c("PCA", "GPCA", "LDA", "PLS", "SIR", "WSIR")))
+```
+
+```{r}
+embryo_nsim_plot <- ggplot(embryo_nsims_allcombos_df, aes(x = neighbor, 
+                                                          y = m, 
+                                                          colour = method)) +
+  geom_line(linewidth = 2) +
+  facet_wrap(~split, nrow = 3) +
+  theme_classic() +
+  labs(x = "Neighborhood size (as a percent of test set)", y = "Mean jaccard index value", fill = "DR method") +
+  ggtitle("") +
+  geom_point(size = 2) +
+  #set_colours +
+  scale_colour_manual(values = fig2_colours,
+                      labels = c("PCA", "GPCA", "LDA", "PLS", "wSIR(0)", "wSIR"),
+                      name = "") +
+  theme(strip.background = element_blank(), legend.position = "bottom") +
+  guides(colour = guide_legend(nrow = 1)) +
+    theme(strip.background = element_blank()) + 
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15)) + 
+  theme(strip.text = element_text(size = 20)) +
+  theme(legend.text = element_text(size = 15)) +
+  theme(text = element_text(size = 5)) +
+  NULL
+embryo_nsim_plot
+
+ggsave(plot = embryo_nsim_plot, filename = "fig2_plots_raw/embryo_nsim_plot_noratio.pdf", width = 10, height = 12)
+ggsave(plot = embryo_nsim_plot, filename = "fig2_plots_raw/embryo_nsim_plot_noratio.png", width = 10, height = 12)
+```
+
+# Xenium
+
+BCDC
+
+```{r}
+load("xenium_allmethods_comparisons.Rdata")
+library(abind)
+array_results <- abind(all_results, along = 2)
+df_results_mean <- apply(array_results, 1, mean)
+df_results_sd <- apply(array_results, 1, sd)
+
+xenium_dr_avg_bc_dc_df <- data.frame(t(df_results_mean)) %>%
+  dplyr::select(contains("dc")) %>%
+  rename_with(~ str_replace(., "^dc", "mean"))
+
+xenium_dr_sd_bc_dc_df <-  data.frame(t(df_results_sd)) %>%
+  dplyr::select(contains("dc")) %>%
+  rename_with(~ str_replace(., "^dc", "sd"))
+```
+
+
+```{r}
+dc_results_only <- cbind(xenium_dr_avg_bc_dc_df, 
+                        xenium_dr_sd_bc_dc_df) %>%
+  pivot_longer(cols = starts_with(c("mean", "sd")), 
+               names_to = c(".value", "method"),
+               names_sep = "\\.") %>%
+  mutate(method = toupper(method)) %>%
+  mutate(method = factor(method, levels = c("PCA", "GPCA", "LDA", "PLS", "SIR", "WSIR")))
+
+xenium_bc_dc_plot <- ggplot(dc_results_only, aes(x = method, y = mean, fill = method)) +
+  geom_col(width = 0.6) + 
+  geom_errorbar(data = dc_results_only, aes(x = method, ymin = mean-sd, ymax = mean+sd), width = 0.5) +
+  labs(x = "DR method", y = "BCDC") +
+  theme_classic() +
+  theme(legend.position = "") +
+  set_colours +
+  ggtitle("") +
+  scale_x_discrete(labels = c("PCA", "GPCA", "LDA", "PLS", "wSIR(0)", "wSIR")) +
+  theme(strip.background = element_blank()) + 
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15)) + 
+  theme(strip.text = element_text(size = 20)) +
+  # theme(= element_text(angle = 45, hjust = 0, vjust = 0.5)) + 
+  NULL
+
+
+
+xenium_bc_dc_plot
+
+
+ggsave(plot = xenium_bc_dc_plot, filename = "fig2_plots_raw/xenium_bc_dc_plot.pdf", 
+       width = 10)
+```
+
+Neighbourhood similarity
+
+```{r}
+jaccard_mean_df <- data.frame(t(df_results_mean)) %>%
+  dplyr::select(contains("jaccard")) %>%
+  dplyr::select(contains("m.")) %>%
+  rename_with(~str_remove(., "^jaccard."))
+
+jaccard_sd_df <- data.frame(t(df_results_sd)) %>%
+  dplyr::select(contains("jaccard")) %>%
+  dplyr::select(contains("m.")) %>%
+  rename_with(~ str_remove(., "^jaccard.")) %>%
+  rename_with(~ str_replace(., "m.", "sd."))
+
+jaccard_df <- cbind(jaccard_mean_df, jaccard_sd_df)
+
+xenium_nsims_allcombos_df <- jaccard_df %>% pivot_longer(cols = everything(), 
+               names_to = c("method", ".value", "neighbor"),
+               names_sep = "\\.") %>%
+  group_by(neighbor) %>%
+  mutate(ratio = m/m[method == "pca"]) %>%
+  mutate(method = toupper(method)) %>%
+  mutate(neighbor = case_when(neighbor=="1" ~ 0.5, neighbor =="2" ~ 1, neighbor == "3" ~ 5, neighbor == "4" ~ 10, neighbor == "5" ~ 20)) %>%
+  mutate(method = factor(method, levels = c("PCA", "GPCA", "LDA", "PLS", "SIR", "WSIR")))
+```
+
+```{r}
+xenium_nsim_plot <- ggplot(xenium_nsims_allcombos_df, aes(x = neighbor, 
+                                                          y = m, 
+                                                          colour = method)) +
+  geom_line(linewidth = 2) +
+  theme_classic() +
+  labs(x = "Neighborhood size (as a percent of test set)", y = "Mean jaccard index value", fill = "DR method") +
+  ggtitle("") +
+  geom_point(size = 2) +
+  #set_colours +
+  scale_colour_manual(values = fig2_colours,
+                      labels = c("PCA", "GPCA", "LDA", "PLS", "wSIR(0)", "wSIR"),
+                      name = "") +
+  theme(strip.background = element_blank(), legend.position = "bottom") +
+  guides(colour = guide_legend(nrow = 1)) +
+  theme(axis.text = element_text(size = 15)) + 
+  theme(axis.title = element_text(size = 20)) + 
+  theme(legend.title = element_text(size = 15)) + 
+  theme(strip.text = element_text(size = 20)) +
+  theme(legend.text = element_text(size = 15)) +
+  NULL
+xenium_nsim_plot
+
+ggsave(plot = xenium_nsim_plot, filename = "fig2_plots_raw/xenium_nsim_plot_noratio.pdf", width = 10, height = 10)
+ggsave(plot = xenium_nsim_plot, filename = "fig2_plots_raw/xenium_nsim_plot_noratio.png", width = 10)
+```
+
+
