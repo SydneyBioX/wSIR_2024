@@ -1,0 +1,434 @@
+---
+title: "analysis_main_fig3"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+analysis for main fig 3: exploration of mouse embryo dataset
+
+```{r}
+# mouse gastrulations
+celltype_colours = c("Epiblast" = "#635547",
+                     "Primitive Streak" = "#DABE99",
+                     "Caudal epiblast" = "#9e6762",
+                     
+                     "PGC" = "#FACB12",
+                     
+                     "Anterior Primitive Streak" = "#c19f70",
+                     "Notochord" = "#0F4A9C",
+                     "Def. endoderm" = "#F397C0",
+                     "Definitive endoderm" = "#F397C0",
+                     "Gut" = "#EF5A9D",
+                     "Gut tube" = "#EF5A9D",
+                     
+                     "Nascent mesoderm" = "#C594BF",
+                     "Mixed mesoderm" = "#DFCDE4",
+                     "Intermediate mesoderm" = "#139992",
+                     "Caudal Mesoderm" = "#3F84AA",
+                     "Paraxial mesoderm" = "#8DB5CE",
+                     "Somitic mesoderm" = "#005579",
+                     "Pharyngeal mesoderm" = "#C9EBFB",
+                     "Splanchnic mesoderm" = "#C9EBFB",
+                     "Cardiomyocytes" = "#B51D8D",
+                     "Allantois" = "#532C8A",
+                     "ExE mesoderm" = "#8870ad",
+                     "Lateral plate mesoderm" = "#8870ad",
+                     "Mesenchyme" = "#cc7818",
+                     "Mixed mesenchymal mesoderm" = "#cc7818",
+                     
+                     "Haematoendothelial progenitors" = "#FBBE92",
+                     "Endothelium" = "#ff891c",
+                     "Blood progenitors 1" = "#f9decf",
+                     "Blood progenitors 2" = "#c9a997",
+                     
+                     "Erythroid1" = "#C72228",
+                     "Erythroid2" = "#f79083",
+                     "Erythroid3" = "#EF4E22",
+                     
+                     "Erythroid" = "#f79083",
+                     "Blood progenitors" = "#f9decf",
+                     
+                     "NMP" = "#8EC792",
+                     
+                     "Rostral neurectoderm" = "#65A83E",
+                     "Caudal neurectoderm" = "#354E23",
+                     "Neural crest" = "#C3C388",
+                     "Forebrain/Midbrain/Hindbrain" = "#647a4f",
+                     "Spinal cord" = "#CDE088",
+                     
+                     "Surface ectoderm" = "#f7f79e",
+                     
+                     "Visceral endoderm" = "#F6BFCB",
+                     "ExE endoderm" = "#7F6874",
+                     "ExE ectoderm" = "#989898",
+                     "Parietal endoderm" = "#1A1A1A",
+                     
+                     "Unknown" = "#FFFFFF",
+                     "Low quality" = "#e6e6e6",
+                     
+                     # somitic and paraxial types
+                     # colour from T chimera paper Guibentif et al Developmental Cell 2021
+                     "Cranial mesoderm" = "#77441B",
+                     "Anterior somitic tissues" = "#F90026",
+                     "Sclerotome" = "#A10037",
+                     "Dermomyotome" = "#DA5921",
+                     "Posterior somitic tissues" = "#E1C239",
+                     "Presomitic mesoderm" = "#9DD84A"
+)
+
+library(SingleCellExperiment)
+library(scater)
+library(StabMap)
+library(zellkonverter)
+library(wSIR)
+library(patchwork)
+library(BiocParallel)
+library(bluster)
+library(pheatmap)
+library(scran)
+library(dplyr)
+library(ggrepel)
+library(ggplotify)
+library(MouseGastrulationData)
+library(ggpubr)
+library(ggrepel)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+set.seed(2024)
+```
+
+```{r}
+subset_lower.tri = function(m) {
+  mm = m[lower.tri(m, diag = FALSE)]
+  return(c(mm))
+}
+
+spe = LohoffSeqFISHData(type = "observed", samples = 1:6)
+
+rownames(spe) <- rowData(spe)$SYMBOL
+
+# remove Low quality cells
+spe <- spe[,!spe$celltype %in% "Low quality"]
+
+# remove Xist from gene set
+spe <- spe[!rownames(spe) %in% "Xist",]
+
+reducedDim(spe, "spatial") <- as.matrix(spatialCoords(spe)[,c("x", "y")]) %*% matrix(c(1,0,0,-1), 2, 2)
+spe <- addPerCellQCMetrics(spe, assay.type = "counts")
+
+# keep only cells with 10 counts in 5 genes
+spe <- spe[, spe$total >= 10 & spe$detected >= 5]
+
+# keep only genes expressed in at least 1 percent of cells
+spe <- addPerFeatureQCMetrics(spe, assay.type = "counts")
+spe <- spe[rowData(spe)$detected > 1,]
+
+spe <- logNormCounts(spe, exprs_values = "counts")
+
+spe <- runPCA(spe)
+spe <- runUMAP(spe)
+
+exprs_raw = t(assay(spe, "logcounts"))
+coords_raw = as.data.frame(reducedDim(spe, "spatial"))
+samples_raw = factor(spe$embryo)
+celltypes_raw = factor(spe$celltype)
+```
+
+wSIR
+
+```{r}
+out = wSIR(X = exprs_raw,
+           coords = coords_raw,
+           samples = samples_raw,
+           # group = celltypes_raw,
+           slices = 30,
+           alpha = 4,
+           maxDirections = 50,
+           varThreshold = 0.99,
+           optim_params = FALSE)
+getVarImportance = function(a) diag(a %*% solve(crossprod(a)) %*% t(a))
+
+a <- out$directions
+varimportance <- getVarImportance(a)
+b <- attributes(reducedDim(spe, "PCA"))$rotation
+varimportance_pca <- getVarImportance(b)
+
+reducedDim(spe, "wSIR") <- out[[1]]
+
+spe <- runUMAP(spe, dimred = "wSIR", name = "UMAP_wSIR", BPPARAM = MulticoreParam(workers = 4))
+```
+
+Plot a
+
+```{r}
+g = plotReducedDim(spe, "UMAP_wSIR", colour_by = "celltype", point_size = pts, scattermore = TRUE) + 
+  guides(colour = guide_legend(override.aes = list(size = 10), title = "")) + 
+  # ggtitle("Cells coloured by wSIR clusters") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) + 
+  scale_colour_manual(values = celltype_colours) +
+  theme(legend.position = "none") + 
+  NULL
+```
+
+Plot b
+
+```{r}
+g =   plotReducedDim(spe, "UMAP", colour_by = "celltype", point_size = pts, scattermore = TRUE) + 
+  guides(colour = guide_legend(override.aes = list(size = 10), title = "")) + 
+  # ggtitle("Cells coloured by PCA clusters") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  xlab("") + 
+  ylab("") + 
+  scale_colour_manual(values = celltype_colours) +
+  theme(aspect.ratio = 1) +
+  theme(legend.position = "none") + 
+  NULL
+```
+
+Plot c
+
+```{r}
+# spatial plots of the most relevant genes
+topGenes = names(sort(varimportance, decreasing = TRUE)[1:50])
+topGenes_pca = names(sort(varimportance_pca, decreasing = TRUE)[1:50])
+
+# genes = df[df$Top <= 7 & df$summary.logFC > 0,"gene"]
+# length(genes)
+gList = sapply(c(topGenes[1:5], topGenes_pca[1:5]), function(gene){
+  plotReducedDim(spe, "spatial", colour_by = gene, point_size = pts, other_fields = "embryo", scattermore = FALSE) +
+    theme(axis.text = element_blank()) +
+    theme(axis.line = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    xlab("") + 
+    ylab("") + 
+    theme(aspect.ratio = 1) +
+    theme(legend.position = "none") + 
+    ggtitle(gene) + 
+    theme(plot.title = element_text(hjust = 0.5, size = 20)) + 
+    facet_wrap(~embryo)
+}, simplify = FALSE)
+
+g = wrap_plots(gList, ncol = 2, byrow = FALSE)
+```
+
+Plot d
+
+preparation
+```{r}
+geneList = rownames(spe) # the gene universe
+
+getEgo = function(topGenes, geneList) {
+  
+  gene.df = bitr(geneList, fromType = "SYMBOL",
+                 toType = c("ENTREZID","SYMBOL"),
+                 OrgDb = org.Mm.eg.db)
+  head(gene.df)
+  
+  # obtain the Entrez IDs that correspond to significantly DE genes
+  topGenesEntrez = gene.df[gene.df[,1] %in% topGenes,2]
+  length(topGenesEntrez)
+  # obtain all Entrez IDs that are able to be converted (the gene universe)
+  allGenesEntrez = gene.df[gene.df[,1] %in% rownames(spe), 2]
+  length(allGenesEntrez)
+  
+  # overrepresentation test
+  egoAll = enrichGO(gene          = topGenesEntrez,
+                    universe      = allGenesEntrez,
+                    OrgDb         = org.Mm.eg.db,
+                    ont           = "ALL",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 1,
+                    qvalueCutoff  = 1,
+                    minGSSize     = 20,
+                    maxGSSize     = 200,
+                    readable      = TRUE,
+                    pool          = TRUE)
+  
+  egoAll <- as.data.frame(egoAll)
+  
+  return(egoAll)
+}
+
+egoAll = getEgo(topGenes = topGenes, geneList = geneList)
+
+egoAll_pca = getEgo(topGenes = topGenes_pca, geneList = geneList)
+```
+
+plot
+
+```{r}
+goterms = intersect(rownames(egoAll), rownames(egoAll_pca))
+df_go = data.frame(wsir = egoAll[goterms, "pvalue"],
+                   pca = egoAll_pca[goterms, "pvalue"],
+                   label = egoAll[goterms, "Description"],
+                   type = egoAll[goterms, "ONTOLOGY"])
+
+g = ggplot(df_go, aes( y = -log(wsir), x = -log(pca))) + 
+  geom_point(aes(colour = type)) + 
+  geom_text_repel(aes(label = label), data = subset(df_go, rank(wsir) <= 4 | rank(pca) <= 4),
+                  size = 5) + 
+  theme_classic() +
+  theme(legend.position = "bottom") + 
+  scale_colour_manual(values = ontcols, drop = FALSE) +
+  xlab( "-log(P-value) for top PCA genes") + 
+  ylab( "-log(P-value) for top wSIR genes") + 
+  guides(colour = guide_legend(title = "", override.aes = list(size = 10))) + 
+  theme(axis.title = element_text(size = 20))
+```
+
+Plot E
+
+```{r}
+spe$tmp = ifelse(spe$celltype == "Endothelium", "Endothelium", "other")
+
+g = plotReducedDim(spe[, order(spe$tmp)], "UMAP_wSIR", colour_by = "tmp", point_size = pts, scattermore = FALSE) +
+  guides(colour = guide_legend(override.aes = list(size = 10), title = "", ncol = 2)) +
+  # ggtitle("Cells coloured by wSIR clusters") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  xlab("") +
+  ylab("") +
+  theme(aspect.ratio = 1) +
+  theme(legend.position = "none") + 
+  scale_colour_manual(values = setNames(c(celltype_colours["Endothelium"], "grey90"), c("Endothelium", "other")))
+```
+
+Plot F
+
+preparation
+
+```{r}
+endo = spe[,spe$celltype == "Endothelium"]
+
+exprs_raw = t(assay(endo, "logcounts"))
+coords_raw = as.data.frame(reducedDim(endo, "spatial"))
+samples_raw = factor(endo$embryo)
+
+out = wSIR(X = exprs_raw,
+           coords = coords_raw,
+           samples = samples_raw,
+           # group = celltypes_raw,
+           slices = 30,
+           alpha = 4,
+           maxDirections = 50,
+           varThreshold = 0.99,
+           optim_params = FALSE)
+
+reducedDim(endo, "wSIR") <- out$scores
+
+endo <- runUMAP(endo, dimred = "wSIR", name = "UMAP_wSIR", BPPARAM = MulticoreParam(workers = 4))
+
+pts = 0
+
+np = NNGraphParam(cluster.fun = "louvain", k = 50)
+# np = NNGraphParam()
+
+m = clusterRows(reducedDim(endo, "wSIR"),
+                BLUSPARAM = np)
+
+endo$endo_cluster <- m
+
+endo <- runPCA(endo)
+endo <- runUMAP(endo, dimred = "PCA")
+
+
+mp = clusterRows(reducedDim(endo, "PCA"), BLUSPARAM = np)
+
+endo$endo_cluster_pca <- mp
+
+sm = scoreMarkers(endo, groups = endo$endo_cluster)
+# pull out the top5 per group - subset to positive LFC and sort by min.auc
+
+res = lapply(sm, function(x) {
+  xx = subset(x, mean.logFC.detected > 0)
+  xx = xx[order(xx$min.AUC, decreasing = TRUE),]
+  rownames(xx)[1:5]
+})
+
+# now also take out the markers for endothelium
+sm_all = scoreMarkers(spe, groups = spe$celltype)[["Endothelium"]]
+sm_all = subset(sm_all, mean.logFC.detected > 0)
+sm_all = sm_all[order(sm_all$min.AUC, decreasing = TRUE),]
+
+endomarkers = c(rownames(sm_all)[1:5], unlist(res))
+
+endo$endo_cluster <- factor(endo$endo_cluster, levels = rev(levels(endo$endo_cluster)))
+```
+
+Plot
+
+```{r}
+g = plotReducedDim(endo, "UMAP_wSIR", colour_by = "endo_cluster", point_size = 1, scattermore = FALSE) +
+  guides(colour = guide_legend(override.aes = list(size = 10), title = "", ncol = 2)) +
+  # ggtitle("Cells coloured by wSIR clusters") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  xlab("") +
+  ylab("") +
+  theme(aspect.ratio = 1) +
+  theme(legend.position = "right") + 
+  guides(colour = guide_legend(ncol = 1, override.aes = list(size = 10), title = "")) +
+  # scale_colour_manual(values = setNames(c(celltype_colours["Endothelium"], "grey90"), c("Endothelium", "other"))) + 
+  NULL
+```
+
+Plot G
+
+```{r}
+spe$endo_cluster <- NA
+colData(spe)[colnames(endo), "endo_cluster"] <- endo$endo_cluster
+spe$endo_cluster <- factor(spe$endo_cluster)
+
+
+g = plotReducedDim(spe[, order(spe$endo_cluster, na.last = FALSE)], "spatial", colour_by = "endo_cluster",
+               point_size = 1, other_fields = "embryo", size_by = "endo_cluster",
+               point_shape = 16) + 
+  guides(colour = guide_legend(override.aes = list(size = 10))) + 
+  facet_wrap(~embryo) + 
+  theme(aspect.ratio = 1) +
+  scale_size_manual(na.value = 1e-4, values = setNames(rep(1.5, length(unique(spe$endo_cluster))), unique(spe$endo_cluster))) + 
+  xlab("") + 
+  ylab("") +
+  theme(axis.line = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  theme(axis.text = element_blank()) + 
+  theme(strip.background = element_blank()) +
+  theme(strip.text = element_text(size = 20)) +
+  guides(colour = guide_legend(title = "", override.aes = list(size = 10))) + 
+  guides(size = guide_none()) + 
+  theme(legend.position = "none")
+```
+
+Plot H
+
+```{r}
+g = plotDots(endo, features = unique(endomarkers), group = "endo_cluster", center = TRUE, scale = TRUE) + 
+  coord_flip() + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) + 
+  ylab("") + 
+  xlab("Endothelium wSIR subcluster")
+```
+
+Plot I
+
+Plot J
+

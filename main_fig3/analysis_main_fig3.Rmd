@@ -1,0 +1,178 @@
+---
+title: "analysis_main_fig3"
+author: '500455892'
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Analysis for main fig 3. 
+
+Important note: plots a-h have their analysis in the plots .rmd file since separate results objects did not need to be created for those plots (unlike for e.g benchmarking studies). Therefore, this document contains only the analysis files for plots I and J of main figure 3.
+
+
+```{r}
+library(reticulate)
+use_condaenv("/opt/anaconda3/envs/tangram-env")
+source_python("tangram_wrapFunc.py")
+library(anndata)
+library(microbenchmark)
+library(wSIR)
+
+run_pca <- function(X, varThreshold = 0.95, maxDirections = 40) {
+  # make pca object
+  pca <- prcomp(X) 
+  # find number of directions based on varThreshold
+  cumvar_pca <- cumsum(pca$sdev^2)/sum(pca$sdev^2)
+  d_pca <- which(cumvar_pca >= varThreshold)[1]
+  d_pca <- min(maxDirections, d_pca)
+  
+  # compute scores, directions
+  scores <- pca$x[,1:d_pca]
+  directions <- pca$rotation[,1:d_pca]
+  colnames(directions) <- NULL
+  
+  return(list(scores = scores,
+              directions = directions,
+              estd <- d_pca))
+}
+
+load("MouseData.Rdata")
+# this loads 3 lists, exprs_count, exprs_log_count, and coords, each list has three elements each corresponding to one embryo
+
+numDimensions <- 50
+
+bm_dr <- microbenchmark(
+  pca_obj <- run_pca(exprs_logcount_list[[1]], maxDirections = numDimensions),
+  pca_test <- projectWSIR(wsir = pca_obj, newdata = as.matrix(exprs_logcount_list[[2]])),
+
+  wsir_obj <- wSIR:::wSIRSpecifiedParams(X = exprs_logcount_list[[1]],
+                                         coords = coords_list[[1]],
+                                         slices = 10,
+                                         alpha = 8,
+                                         varThreshold = 1,
+                                         maxDirections = numDimensions),
+  wsir_obj$test <- projectWSIR(wsir_obj, as.matrix(exprs_logcount_list[[2]])),
+  unit = "s", times = 30
+)
+## tangram on PC
+pca_obj_train <- as(pca_obj[[1]], "dgCMatrix")
+pca_obj_test <- as(pca_test, "dgCMatrix")
+wsir_obj_train <- as(wsir_obj$scores, "dgCMatrix")
+wsir_obj_test <- as(wsir_obj$test, "dgCMatrix")
+coords_list <- lapply(coords_list, as.matrix)
+
+bm_tangram <- microbenchmark(
+  #### One-stage tangram method
+  # tangram on count
+  
+  run_tangram_count <- tangram_run(exprs_count_list[[1]], coords_list[[1]], 
+                                   exprs_count_list[[2]]),
+  # tangram on log count
+  run_tangram_logcount <- tangram_run(exprs_logcount_list[[1]], coords_list[[1]], 
+                                      exprs_logcount_list[[2]]),
+  
+  run_tangram_pc <- tangram_run(pca_obj_train, coords_list[[1]],
+                                pca_obj_test),
+  
+  run_tangram_wSIR <- tangram_run(wsir_obj_train, as.matrix(coords_list[[1]]), 
+                                  wsir_obj_test),
+  
+  times = 30, unit = "s"
+)
+
+# table/figure
+dr_step_time = bm_dr %>% group_by(expr) %>% 
+  summarise(meanTime = mean(time)/10^9)
+dr_tangram_time = bm_tangram %>% group_by(expr) %>% 
+  summarise(meanTime = mean(time)/10^9)
+computationTime <- rbind(dr_step_time, dr_tangram_time)[c(5, 6, 1,7, 3, 8),]
+
+# Run tangram 30 times and save the results
+Nrep = 30;
+allResultsMetrics = vector(mode = "list", length = Nrep)
+
+for (ii in 1:Nrep){
+  run_tangram_count <- tangram_run(exprs_count_list[[1]], as.matrix(coords_list[[1]]), 
+                                   exprs_count_list[[2]])
+  # tangram on log count
+  run_tangram_logcount <- tangram_run(exprs_logcount_list[[1]], as.matrix(coords_list[[1]]), 
+                                      exprs_logcount_list[[2]])
+  
+  
+  run_tangram_pc <- tangram_run(pca_obj_train, as.matrix(coords_list[[1]]),
+                                pca_obj_test)
+  
+  run_tangram_wSIR_full <- tangram_run(wsir_obj_train, as.matrix(coords_list[[1]]),
+                                  wsir_obj_test)
+  
+  allResults <- list(count = run_tangram_count, logCount = run_tangram_logcount,
+                     pc = run_tangram_pc, wsir_full =  run_tangram_wSIR_full)
+  
+  allResultsMetrics[[ii]] <- sapply(allResults, function(onepred){
+    bcdc <- Rfast::bcdcor(onepred, coords_list[[2]])
+    RMSE <- sqrt(mean(apply((onepred - coords_list[[2]])^2, 1, sum)))
+    c(bcdc, RMSE)
+  })
+}
+# variance threshold 0.95
+d_wsir <- min(which(cumsum(rev(wsir_obj$evalues))/sum(wsir_obj$evalues) > 0.95))
+wsir_obj_train <- as(wsir_obj$scores[, 1:d_wsir], "dgCMatrix")
+wsir_obj_test <- as(wsir_obj$test[, 1:d_wsir], "dgCMatrix")
+
+bm_tangram_wsir_reduced <- microbenchmark(
+  run_tangram_wSIR <- tangram_run(wsir_obj_train, as.matrix(coords_list[[1]]), 
+                                  wsir_obj_test),
+  
+  times = 30, unit = "s"  
+)
+bm_tangram <- cbind(bm_tangram, bm_tangram_wsir_reduced)
+save(bm_dr, bm_tangram, file = "bm_time_dr_tangram.Rdata")
+
+computationTime_final <- rbind(computationTime, bm_tangram_wsir_reduced %>% group_by(expr) %>%
+  summarise(meanTime = mean(time)/10^9))
+
+for (ii in 1:Nrep){
+  run_tangram_wSIR <- tangram_run(wsir_obj_train, as.matrix(coords_list[[1]]),
+                                wsir_obj_test)
+  bcdc <- Rfast::bcdcor(run_tangram_wSIR, coords_list[[2]])
+  RMSE <- sqrt(mean(apply((run_tangram_wSIR - coords_list[[2]])^2, 1, sum)))
+  allResultsMetrics[[ii]] <- cbind(allResultsMetrics[[ii]], wsir_r = c(bcdc, RMSE))
+}
+
+allMetrics <- abind::abind(allResultsMetrics, along = 3)
+metricsMean <- apply(allMetrics, 1:2, mean)
+df_metrics <- data.frame(t(metricsMean))
+colnames(df_metrics) <- c("BCDC", "MSE")
+computationTime_final$method <- c("tangram_count", "tangram_logcount",
+                                  "pca", "tangram_pc", "wsir", 
+                                  "tangram_full_wsir", "tangram_reduced_wsir")
+df_metrics$time <- computationTime_final$meanTime[c(1, 2, 4, 6, 7)]
+fig4_colours <- c(
+  "Count" = "lightgreen",
+  "LogCount" = "darkgreen",
+  "PCA" = "burlywood1",
+  "WSIR" = "blue")
+
+df_metrics$method <- row.names(df_metrics)
+df_metrics %>%
+  filter(method != "wsir") %>%
+  mutate(method = factor(method, labels = c("Count", "LogCount", "PCA", "WSIR"))) %>%
+  pivot_longer(cols = -method, names_to = "metric", values_to = "values") %>%
+  mutate(metric = factor(metric, labels = c("BCDC", "MSE","Time (seconds)"))) %>%
+  ggplot(aes(x = method, y = values, fill = method)) + 
+  geom_col() +
+  facet_wrap(~metric, scales = "free_y") + 
+  scale_fill_manual(values = fig4_colours) + 
+  theme_classic(base_size = 20) +
+  theme(legend.position = "none") +
+  labs(x = "DR method", y = "")
+  
+#ggsave("../../figures/figure_4/raw/embryo_new_tangram.pdf", width = 18, height = 10)
+
+save(allResultsMetrics, df_metrics, file = "embryo_tangrams_metrics.Rdata")
+```
+
