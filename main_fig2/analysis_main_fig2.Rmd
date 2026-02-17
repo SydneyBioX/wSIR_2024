@@ -10,8 +10,17 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-library(wSIR)
 library(tidyverse)
+library(PRECAST)
+library(SeuratObject)
+library(wSIR)
+library(DR.SC)
+library(vctrs) # for vec_rep_each function
+library(SpatialPCA)
+library(bluster)
+library(doBy)
+source("spatial_benchmark_functions.R")
+source("wrappers.R")
 ```
 
 
@@ -204,5 +213,864 @@ saveRDS(bc_dc_params_df, file = "xenium_results_bc_dc_params.Rds")
 ```
 
 # Benchmarking
+
+## Embryo
+
+download data
+
+```{r}
+# Packages needed to download data
+library(scran) # for logNormCounts
+library(MouseGastrulationData) # to download the data for this vignette
+
+
+seqfish_data_sample1 <- LohoffSeqFISHData(samples = c(1,2))
+seqfish_data_sample1 = logNormCounts(seqfish_data_sample1) # log transform variance stabilising
+rownames(seqfish_data_sample1) <- rowData(seqfish_data_sample1)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample1_exprs = t(assay(seqfish_data_sample1, "logcounts")) # extract matrix of gene expressions
+sample1_exprs_raw = t(assay(seqfish_data_sample1, "counts")) # extract counts of gene expressions
+sample1_coords = spatialCoords(seqfish_data_sample1)[,1:2] %>% as.data.frame()
+colnames(sample1_coords) = c("x", "y")
+
+seqfish_data_sample2 <- LohoffSeqFISHData(samples = c(3,4))
+seqfish_data_sample2 = logNormCounts(seqfish_data_sample2) # log transform variance stabilising
+rownames(seqfish_data_sample2) <- rowData(seqfish_data_sample2)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample2_exprs = t(assay(seqfish_data_sample2, "logcounts")) # extract matrix of gene expressions
+sample2_exprs_raw = t(assay(seqfish_data_sample2, "counts")) # extract counts of gene expressions
+sample2_coords = spatialCoords(seqfish_data_sample2)[,1:2] %>% as.data.frame()
+colnames(sample2_coords) = c("x", "y")
+
+seqfish_data_sample3 <- LohoffSeqFISHData(samples = c(5,6))
+seqfish_data_sample3 = logNormCounts(seqfish_data_sample3) # log transform variance stabilising
+rownames(seqfish_data_sample3) <- rowData(seqfish_data_sample3)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample3_exprs = t(assay(seqfish_data_sample3, "logcounts")) # extract matrix of gene expressions
+sample3_exprs_raw = t(assay(seqfish_data_sample3, "counts")) # extract counts of gene expressions
+sample3_coords = spatialCoords(seqfish_data_sample3)[,1:2] %>% as.data.frame()
+colnames(sample3_coords) = c("x", "y")
+```
+
+### BCDC
+
+#### Sample 1
+
+Create matrix of which cells to take at each iteration
+
+```{r}
+nrep <- 10
+p_to_take <- 0.1
+
+take_mat <- matrix(NA, nrow = nrow(sample1_coords), ncol = nrep) # column i is which rows to take in iteration i
+
+for (i in 1:nrep) { # fill matrix of which rows to take each repeat
+  to_take <- sample(x = c(TRUE, FALSE), size = nrow(sample1_coords), replace = TRUE, prob = c(p_to_take,(1-p_to_take)))
+  take_mat[,i] <- to_take
+}
+#save(take_mat, file = "take_mat.RData")
+```
+
+Compute BCDCs
+
+```{r}
+load("take_mat.RData")
+nrep <- dim(take_mat)[2]
+
+bcdcs_wsir <- rep(0,nrep)
+bcdcs_precast <- rep(0,nrep)
+bcdcs_drsc <- rep(0,nrep)
+bcdcs_spca <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat[,i]
+  #current_counts <- sample1_counts[to_take,]
+  current_coords <- sample1_coords[to_take,]
+  current_ldo <- paste0("benchmark_embeddings/lowdim_out_r",i,".RData")
+  load(current_ldo)
+  current_spca_out <- paste0("benchmark_embeddings/spca_out_r",i,".RData")
+  load(current_spca_out)
+  bcdc_out <- metric_bcdc(low_dims = lowdim_out, coords = current_coords)
+  bcdcs_wsir[i] <- bcdc_out$wSIR
+  bcdcs_precast[i] <- bcdc_out$PRECAST
+  bcdcs_drsc[i] <- bcdc_out$DRSC
+  bcdcs_spca[i] <- energy::bcdcor(spca_out[[1]], spca_out[[2]])
+}
+```
+
+STAMP
+
+```{r}
+load("take_mat.RData")
+
+nrep <- dim(take_mat)[2]
+
+bcdcs_stamp <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat[,i]
+  current_counts <- sample1_counts[to_take,]
+  current_coords <- sample1_coords[to_take,]
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = current_coords)
+  bcdcs_stamp[i] <- energy::bcdcor(stamp_out[[1]], stamp_out[[2]])
+}
+
+#save(bcdcs_stamp, file = "bcdcs_stamp.RData")
+```
+
+Compile results
+
+```{r}
+#load("benchmark_embeddings/bcdcs_stamp.RData")
+means <- c(mean(bcdcs_wsir),
+                               mean(bcdcs_precast),
+                               mean(bcdcs_drsc),
+                               mean(bcdcs_spca),
+                               mean(bcdcs_stamp))
+sds <- c(sd(bcdcs_wsir),
+                               sd(bcdcs_precast),
+                               sd(bcdcs_drsc),
+                               sd(bcdcs_spca),
+                               sd(bcdcs_stamp))
+
+bcdc_df <- data.frame(method = c("wSIR",
+                                 "PRECAST",
+                                 "DR.SC",
+                                 "SpatialPCA",
+                                 "STAMP"),
+                      mean = means,
+                      sd = sds
+                      )
+```
+
+#### Sample 2
+
+```{r}
+nrep <- 10
+p_to_take <- 0.1
+
+take_mat2 <- matrix(NA, nrow = nrow(sample2_coords), ncol = nrep) # column i is which rows to take in iteration i
+
+for (i in 1:nrep) { # fill matrix of which rows to take each repeat
+  to_take <- sample(x = c(TRUE, FALSE), size = nrow(sample2_coords), replace = TRUE, prob = c(p_to_take,(1-p_to_take)))
+  take_mat2[,i] <- to_take
+}
+#save(take_mat2, file = "take_mat2.RData")
+```
+
+```{r}
+load("take_mat2.RData")
+sample2_counts <- t(assay(seqfish_data_sample2, "counts"))
+
+nrep <- dim(take_mat2)[2]
+
+bcdcs_stamp2 <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat2[,i]
+  current_counts <- sample2_counts[to_take,]
+  current_coords <- as.matrix(sample2_coords)[to_take,]
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = current_coords)
+  bcdcs_stamp2[i] <- energy::bcdcor(stamp_out[[1]], stamp_out[[2]])
+}
+
+#save(bcdcs_stamp2, file = "bcdcs_stamp2.RData")
+```
+
+
+```{r}
+load("take_mat2.RData")
+nrep <- dim(take_mat2)[2]
+
+bcdcs_wsir <- rep(0,nrep)
+bcdcs_precast <- rep(0,nrep)
+bcdcs_drsc <- rep(0,nrep)
+bcdcs_spca <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat2[,i]
+  #current_counts <- sample2_counts[to_take,]
+  current_coords <- sample2_coords[to_take,]
+  current_ldo <- paste0("benchmark_embeddings2/lowdim_out_r",i,".RData")
+  load(current_ldo)
+  current_spca_out <- paste0("benchmark_embeddings2/spca_out_r",i,".RData")
+  load(current_spca_out)
+  bcdc_out <- metric_bcdc(low_dims = lowdim_out, coords = current_coords)
+  bcdcs_wsir[i] <- bcdc_out$wSIR
+  bcdcs_precast[i] <- bcdc_out$PRECAST
+  bcdcs_drsc[i] <- bcdc_out$DRSC
+  bcdcs_spca[i] <- energy::bcdcor(spca_out[[1]], spca_out[[2]])
+}
+```
+
+```{r}
+#load("benchmark_embeddings2/bcdcs_stamp2.RData")
+means <- c(mean(bcdcs_wsir),
+                               mean(bcdcs_precast),
+                               mean(bcdcs_drsc),
+                               mean(bcdcs_spca),
+                               mean(bcdcs_stamp2))
+sds <- c(sd(bcdcs_wsir),
+                               sd(bcdcs_precast),
+                               sd(bcdcs_drsc),
+                               sd(bcdcs_spca),
+                               sd(bcdcs_stamp2))
+
+bcdc2_df <- data.frame(method = c("wSIR",
+                                 "PRECAST",
+                                 "DR.SC",
+                                 "SpatialPCA",
+                                 "STAMP"),
+                      mean = means,
+                      sd = sds
+                      )
+```
+
+
+#### Sample 3
+
+```{r}
+nrep <- 10
+p_to_take <- 0.1
+
+take_mat3 <- matrix(NA, nrow = nrow(sample3_coords), ncol = nrep) # column i is which rows to take in iteration i
+
+for (i in 1:nrep) { # fill matrix of which rows to take each repeat
+  to_take <- sample(x = c(TRUE, FALSE), size = nrow(sample3_coords), replace = TRUE, prob = c(p_to_take,(1-p_to_take)))
+  take_mat3[,i] <- to_take
+}
+#save(take_mat3, file = "take_mat3.RData")
+```
+
+```{r}
+load("take_mat3.RData")
+nrep <- dim(take_mat3)[2]
+
+bcdcs_wsir <- rep(0,nrep)
+bcdcs_precast <- rep(0,nrep)
+bcdcs_drsc <- rep(0,nrep)
+bcdcs_spca <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat3[,i]
+  #current_counts <- sample3_counts[to_take,]
+  current_coords <- sample3_coords[to_take,]
+  current_ldo <- paste0("benchmark_embeddings3/lowdim_out_r",i,".RData")
+  load(current_ldo)
+  current_spca_out <- paste0("benchmark_embeddings3/spca_out_r",i,".RData")
+  load(current_spca_out)
+  bcdc_out <- metric_bcdc(low_dims = lowdim_out, coords = current_coords)
+  bcdcs_wsir[i] <- bcdc_out$wSIR
+  bcdcs_precast[i] <- bcdc_out$PRECAST
+  bcdcs_drsc[i] <- bcdc_out$DRSC
+  bcdcs_spca[i] <- energy::bcdcor(spca_out[[1]], spca_out[[2]])
+}
+```
+
+```{r}
+load("take_mat3.RData")
+sample3_counts <- t(assay(seqfish_data_sample3, "counts"))
+
+nrep <- dim(take_mat3)[2]
+
+bcdcs_stamp3 <- rep(0,nrep)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat3[,i]
+  current_counts <- sample3_counts[to_take,]
+  current_coords <- as.matrix(sample3_coords)[to_take,]
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = current_coords)
+  bcdcs_stamp3[i] <- energy::bcdcor(stamp_out[[1]], stamp_out[[2]])
+}
+
+#save(bcdcs_stamp3, file = "bcdcs_stamp3.RData")
+```
+
+```{r}
+#load("benchmark_embeddings3/bcdcs_stamp3.RData")
+means <- c(mean(bcdcs_wsir),
+                               mean(bcdcs_precast),
+                               mean(bcdcs_drsc),
+                               mean(bcdcs_spca),
+                               mean(bcdcs_stamp3))
+sds <- c(sd(bcdcs_wsir),
+                               sd(bcdcs_precast),
+                               sd(bcdcs_drsc),
+                               sd(bcdcs_spca),
+                               sd(bcdcs_stamp3))
+
+bcdc3_df <- data.frame(method = c("wSIR",
+                                 "PRECAST",
+                                 "DR.SC",
+                                 "SpatialPCA",
+                                 "STAMP"),
+                      mean = means,
+                      sd = sds
+                      )
+```
+
+#### compile results of all samples
+
+```{r}
+bcdc_all_df <- rbind(bcdc_df, bcdc2_df, bcdc3_df)
+bcdc_all_df$sample <- vec_rep_each(c("Embryo 1", "Embryo 2", "Embryo 3"), 5)
+benchmark_colours <- c("SpatialPCA" = "grey",
+                       "PRECAST" = "lightgrey",
+                       "DR.SC" = "darkgrey",
+                       "STAMP" = "grey2",
+                       "wSIR" = "blue")
+save(bcdc_all_df, file = "bcdc_all_df.RData")
+```
+
+### neighbourhood similarity
+
+STAMP
+
+```{r}
+source("neighbourhood_similarity_functions.R")
+jaccard_lowdim <- function(low_dims, # list of embeddings, e.g low_dims$wSIR contains wsir embedding
+                           coords_list, # list of coords where each entry is the coords for the cells used in each dr method. e.g coords_list$spca is the coordinates of cells retained by spca
+                           n_vals) { # n_vals is a list of neighbourhood sizes (e.g 5,10,20)
+  true_dmats <- lapply(coords_list, dist) # create list of distance matrices
+  embedding_dmats <- lapply(low_dims, dist)
+  nmethods <- length(low_dims) # integer number of methods being compared
+  results <- lapply(as.list(c(1:nmethods)), FUN = function(i) { # sapply over 1:nmethods so each time can extract low_dim[[i]], coords_lits[[i]] and dmats[[i]] more easily than loop over one of them
+    embedding <- low_dims[[i]]
+    coords <- coords_list[[i]]
+    true_dmat <- as.matrix(true_dmats[[i]])
+    embedding_dmat <- as.matrix(embedding_dmats[[i]])
+    jaccard_n <- sapply(n_vals, FUN = function(n_size) { # for each neighbourhood size, compute (avg) jaccard value
+      true_neighbours <- find_neighbours(dist_true = true_dmat, n = n_size) # compute n true neighbours
+      current_jaccards <- jaccard_from_dmat(neighbours_true = true_neighbours, dist_dr = embedding_dmat)
+      return(c(mean(current_jaccards), sd(current_jaccards)))
+    })
+    return(jaccard_n)
+  })
+  return(results)
+}
+```
+
+```{r}
+load("take_mat.RData")
+
+nrep <- dim(take_mat)[2]
+
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+stamp_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat[,i]
+  current_counts <- sample1_counts[to_take,]
+  current_coords <- sample1_coords[to_take,]
+  n_sizes <- floor(n_props * sum(take_mat[,i]))
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = as.matrix(current_coords))
+  jc_out_stamp <- jaccard_lowdim(low_dims = list(stamp_out[[1]]),
+                                 coords_list = list(stamp_out[[2]]),
+                                 n_vals = n_sizes)
+  stamp_nsim_mat <- stamp_nsim_mat %>% rbind(jc_out_stamp[[1]][1,])
+}
+
+# Embryo 2
+load("take_mat2.RData")
+
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+stamp_nsim_mat2 <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat2[,i]
+  current_counts <- sample2_counts[to_take,]
+  current_coords <- sample2_coords[to_take,]
+  n_sizes <- floor(n_props * sum(take_mat2[,i]))
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = as.matrix(current_coords))
+  jc_out_stamp <- jaccard_lowdim(low_dims = list(stamp_out[[1]]),
+                                 coords_list = list(stamp_out[[2]]),
+                                 n_vals = n_sizes)
+  stamp_nsim_mat2 <- stamp_nsim_mat2 %>% rbind(jc_out_stamp[[1]][1,])
+}
+
+# Embryo 3
+load("take_mat3.RData")
+
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+stamp_nsim_mat3 <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat3[,i]
+  current_counts <- sample3_counts[to_take,]
+  current_coords <- sample3_coords[to_take,]
+  n_sizes <- floor(n_props * sum(take_mat3[,i]))
+  stamp_out <- stamp_wrapper_complete(X = current_counts,
+                                      coords = as.matrix(current_coords))
+  jc_out_stamp <- jaccard_lowdim(low_dims = list(stamp_out[[1]]),
+                                 coords_list = list(stamp_out[[2]]),
+                                 n_vals = n_sizes)
+  stamp_nsim_mat3 <- stamp_nsim_mat3 %>% rbind(jc_out_stamp[[1]][1,])
+}
+
+#save(stamp_nsim_mat, stamp_nsim_mat2, stamp_nsim_mat3, file = "stamp_nsim_mats.RData")
+```
+
+
+Others
+
+```{r}
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+
+# Embryo 1
+wsir_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+precast_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+drsc_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+spca_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+load("take_mat.RData")
+nrep <- dim(take_mat)[2]
+for (i in 1:nrep) {
+  load(paste0("benchmark_embeddings/lowdim_out_r",i,".RData"))
+  load(paste0("benchmark_embeddings/spca_out_r",i,".RData"))
+  
+  precast_retained <- rownames(sample1_coords) %in% rownames(lowdim_out$PRECAST)
+  precast_coords <- sample1_coords[precast_retained,]
+  coords_list <- list(sample1_coords[take_mat[,i],], 
+                      precast_coords, 
+                      sample1_coords[take_mat[,i],],
+                      spca_out$coords)
+  lowdim_out$SPCA = spca_out$projected
+  
+  n_sizes <- floor(n_props * nrow(sample1_coords[take_mat[,i],]))
+  
+  jc_out <- jaccard_lowdim(low_dims = lowdim_out,
+                           coords_list = coords_list,
+                           n_vals = n_sizes)
+  wsir_nsim_mat <- wsir_nsim_mat %>% rbind(jc_out[[1]][1,])
+  precast_nsim_mat <- precast_nsim_mat %>% rbind(jc_out[[2]][1,])
+  drsc_nsim_mat <- drsc_nsim_mat %>% rbind(jc_out[[3]][1,])
+  spca_nsim_mat <- spca_nsim_mat %>% rbind(jc_out[[4]][1,])
+}
+
+# Embryo 2
+wsir_nsim_mat2 <- matrix(NA, nrow = 0, ncol = length(n_props))
+precast_nsim_mat2 <- matrix(NA, nrow = 0, ncol = length(n_props))
+drsc_nsim_mat2 <- matrix(NA, nrow = 0, ncol = length(n_props))
+spca_nsim_mat2 <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+load("take_mat2.RData")
+nrep <- dim(take_mat2)[2]
+for (i in 1:nrep) {
+  load(paste0("benchmark_embeddings2/lowdim_out_r",i,".RData"))
+  load(paste0("benchmark_embeddings2/spca_out_r",i,".RData"))
+  
+  precast_retained <- rownames(sample2_coords) %in% rownames(lowdim_out$PRECAST)
+  precast_coords <- sample2_coords[precast_retained,]
+  coords_list <- list(sample2_coords[take_mat2[,i],], 
+                      precast_coords, 
+                      sample2_coords[take_mat2[,i],],
+                      spca_out$coords)
+  lowdim_out$SPCA = spca_out$projected
+  
+  n_sizes <- floor(n_props * nrow(sample2_coords[take_mat2[,i],]))
+  
+  jc_out <- jaccard_lowdim(low_dims = lowdim_out,
+                           coords_list = coords_list,
+                           n_vals = n_sizes)
+  wsir_nsim_mat2 <- wsir_nsim_mat2 %>% rbind(jc_out[[1]][1,])
+  precast_nsim_mat2 <- precast_nsim_mat2 %>% rbind(jc_out[[2]][1,])
+  drsc_nsim_mat2 <- drsc_nsim_mat2 %>% rbind(jc_out[[3]][1,])
+  spca_nsim_mat2 <- spca_nsim_mat2 %>% rbind(jc_out[[4]][1,])
+}
+
+# Embryo 3
+wsir_nsim_mat3 <- matrix(NA, nrow = 0, ncol = length(n_props))
+precast_nsim_mat3 <- matrix(NA, nrow = 0, ncol = length(n_props))
+drsc_nsim_mat3 <- matrix(NA, nrow = 0, ncol = length(n_props))
+spca_nsim_mat3 <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+load("take_mat3.RData")
+nrep <- dim(take_mat3)[2]
+for (i in 1:nrep) {
+  load(paste0("benchmark_embeddings3/lowdim_out_r",i,".RData"))
+  load(paste0("benchmark_embeddings3/spca_out_r",i,".RData"))
+  
+  precast_retained <- rownames(sample3_coords) %in% rownames(lowdim_out$PRECAST)
+  precast_coords <- sample3_coords[precast_retained,]
+  coords_list <- list(sample3_coords[take_mat3[,i],], 
+                      precast_coords, 
+                      sample3_coords[take_mat3[,i],],
+                      spca_out$coords)
+  lowdim_out$SPCA = spca_out$projected
+  
+  n_sizes <- floor(n_props * nrow(sample3_coords[take_mat3[,i],]))
+  
+  jc_out <- jaccard_lowdim(low_dims = lowdim_out,
+                           coords_list = coords_list,
+                           n_vals = n_sizes)
+  wsir_nsim_mat3 <- wsir_nsim_mat3 %>% rbind(jc_out[[1]][1,])
+  precast_nsim_mat3 <- precast_nsim_mat3 %>% rbind(jc_out[[2]][1,])
+  drsc_nsim_mat3 <- drsc_nsim_mat3 %>% rbind(jc_out[[3]][1,])
+  spca_nsim_mat3 <- spca_nsim_mat3 %>% rbind(jc_out[[4]][1,])
+}
+
+#load("benchmark_embeddings/stamp_nsim_mats.RData")
+
+nsim_e1_df <- data.frame(means = c(colMeans(wsir_nsim_mat),
+                                   colMeans(precast_nsim_mat),
+                                   colMeans(drsc_nsim_mat),
+                                   colMeans(spca_nsim_mat),
+                                   colMeans(stamp_nsim_mat)),
+                         sds = c(colSds(wsir_nsim_mat),
+                                 colSds(precast_nsim_mat),
+                                 colSds(drsc_nsim_mat),
+                                 colSds(spca_nsim_mat),
+                                 colSds(stamp_nsim_mat)),
+                         method = vec_rep_each(c("wSIR",
+                                                 "PRECAST",
+                                                 "DR.SC",
+                                                 "SpatialPCA",
+                                                 "STAMP"), length(n_props)),
+                         n_prop = rep(n_props, 5))
+nsim_e2_df <- data.frame(means = c(colMeans(wsir_nsim_mat2),
+                                   colMeans(precast_nsim_mat2),
+                                   colMeans(drsc_nsim_mat2),
+                                   colMeans(spca_nsim_mat2),
+                                   colMeans(stamp_nsim_mat2)),
+                         sds = c(colSds(wsir_nsim_mat2),
+                                 colSds(precast_nsim_mat2),
+                                 colSds(drsc_nsim_mat2),
+                                 colSds(spca_nsim_mat2),
+                                 colSds(stamp_nsim_mat2)),
+                         method = vec_rep_each(c("wSIR",
+                                                 "PRECAST",
+                                                 "DR.SC",
+                                                 "SpatialPCA",
+                                                 "STAMP"), length(n_props)),
+                         n_prop = rep(n_props, 5))
+nsim_e3_df <- data.frame(means = c(colMeans(wsir_nsim_mat3),
+                                   colMeans(precast_nsim_mat3),
+                                   colMeans(drsc_nsim_mat3),
+                                   colMeans(spca_nsim_mat3),
+                                   colMeans(stamp_nsim_mat3)),
+                         sds = c(colSds(wsir_nsim_mat3),
+                                 colSds(precast_nsim_mat3),
+                                 colSds(drsc_nsim_mat3),
+                                 colSds(spca_nsim_mat3),
+                                 colSds(stamp_nsim_mat3)),
+                         method = vec_rep_each(c("wSIR",
+                                                 "PRECAST",
+                                                 "DR.SC",
+                                                 "SpatialPCA",
+                                                 "STAMP"), length(n_props)),
+                         n_prop = rep(n_props, 5))
+nsim_df <- rbind(nsim_e1_df,nsim_e2_df,nsim_e3_df)
+nsim_df$sample <- vec_rep_each(c("Embryo 1","Embryo 2","Embryo 3"),25)
+save(nsim_df, file = "nsim_df.RData")
+```
+
+## Xenium breast cancer dataset
+
+Note: the dataset is to large to include in this github. To access the data, please refer to the data availability section in the manuscript.
+
+Create matrices of which points to take at each iteration
+
+```{r}
+nrep <- 10
+p_to_take <- 0.1
+
+take_mat_xb1 <- matrix(NA, 
+                       nrow = nrow(xb1_coords), 
+                       ncol = nrep) # column i is which rows to take in iteration i
+
+for (i in 1:nrep) { # fill matrix of which rows to take each repeat
+  to_take <- sample(x = c(TRUE, FALSE), 
+                    size = nrow(xb1_coords), 
+                    replace = TRUE, 
+                    prob = c(p_to_take,(1-p_to_take)))
+  take_mat_xb1[,i] <- to_take
+}
+save(take_mat_xb1, file = "take_mat_xb1.RData")
+```
+
+```{r}
+nrep <- 10
+p_to_take <- 0.1
+rownames(xb2_coords) <- rownames(xb2_exprs)
+
+take_mat_xb2 <- matrix(NA, 
+                       nrow = nrow(xb2_coords), 
+                       ncol = nrep) # column i is which rows to take in iteration i
+
+for (i in 1:nrep) { # fill matrix of which rows to take each repeat
+  to_take <- sample(x = c(TRUE, FALSE), 
+                    size = nrow(xb2_coords), 
+                    replace = TRUE, 
+                    prob = c(p_to_take,(1-p_to_take)))
+  take_mat_xb2[,i] <- to_take
+}
+save(take_mat_xb2, file = "take_mat_xb2.RData")
+```
+
+### Sample 1
+
+STAMP
+
+```{r}
+load("take_mat_xb1.RData")
+xb1_coords <- readRDS(file = "xb1_coords.Rds") %>% as.data.frame()
+xb1_counts <- readRDS(file = "xb1_counts.Rds")
+
+take1 <- take_mat_xb1[,1]
+counts1 <- xb1_counts[take1,]
+coords1 <- xb1_coords[take1,]
+start <- Sys.time()
+stamp_out <- stamp_wrapper_complete(X = counts1,
+                                    coords = as.matrix(coords1))
+save(stamp_out, file = paste0("stamp_xb1/stamp_out_r",1,".RData"))
+end <- Sys.time()
+end-start
+
+for (i in 2:10) {
+  print(paste0("Current iteration: ", i))
+  take <- take_mat_xb1[,i]
+  counts_sampled <- xb1_counts[take,]
+  coords_sampled <- xb1_coords[take,]
+  stamp_out <- stamp_wrapper_complete(X = counts_sampled,
+                                      coords = as.matrix(coords_sampled))
+  save(stamp_out, file = paste0("stamp_xb1/stamp_out_r",i,".RData"))
+}
+```
+
+
+BCDC
+
+```{r}
+nrep <- 10
+
+bcdcs_wsir <- rep(0,nrep)
+bcdcs_precast <- rep(0,nrep)
+bcdcs_drsc <- rep(0,nrep)
+bcdcs_stamp <- rep(0,nrep)
+load("take_mat_xb1.RData")
+rownames(xb1_coords) <- rownames(xb1_exprs)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat_xb1[,i]
+  #current_counts <- xb1_coords[to_take,]
+  current_coords <- xb1_coords[to_take,]
+  current_ldo <- paste0("benchmark_xb1/lowdim_out_r",i,".RData")
+  load(current_ldo)
+  current_stamp_out <- paste0("benchmark_xb1/stamp_out_r",i,".RData")
+  load(current_stamp_out)
+  bcdc_out <- metric_bcdc(low_dims = lowdim_out, coords = current_coords)
+  bcdcs_wsir[i] <- bcdc_out$wSIR
+  bcdcs_precast[i] <- bcdc_out$PRECAST
+  bcdcs_drsc[i] <- bcdc_out$DRSC
+  bcdcs_stamp[i] <- energy::bcdcor(stamp_out[[1]], stamp_out[[2]])
+}
+
+means <- c(mean(bcdcs_wsir),
+                               mean(bcdcs_precast),
+                               mean(bcdcs_drsc),
+                               mean(bcdcs_stamp))
+sds <- c(sd(bcdcs_wsir),
+                               sd(bcdcs_precast),
+                               sd(bcdcs_drsc),
+                               sd(bcdcs_stamp))
+
+bcdc_xb1_df <- data.frame(method = c("wSIR",
+                                 "PRECAST",
+                                 "DR.SC",
+                                 "STAMP"),
+                      mean = means,
+                      sd = sds
+                      )
+
+save(bcdc_xb1_df, file = "bcdc_xb1_df.RData")
+```
+
+neighbourhood similarity
+
+```{r}
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+
+# Embryo 1
+wsir_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+precast_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+drsc_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+stamp_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+load("take_mat_xb1.RData")
+nrep <- dim(take_mat_xb1)[2]
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ",i))
+  load(paste0("benchmark_xb1/lowdim_out_r",i,".RData"))
+  load(paste0("benchmark_xb1/stamp_out_r",i,".RData"))
+  
+  precast_retained <- rownames(xb1_coords) %in% rownames(lowdim_out$PRECAST)
+  precast_coords <- xb1_coords[precast_retained,]
+  coords_list <- list(xb1_coords[take_mat_xb1[,i],], 
+                      precast_coords, 
+                      xb1_coords[take_mat_xb1[,i],],
+                      stamp_out$coords)
+  lowdim_out$STAMP = stamp_out$embedding
+  
+  n_sizes <- floor(n_props * nrow(xb1_coords[take_mat_xb1[,i],]))
+  
+  jc_out <- jaccard_lowdim(low_dims = lowdim_out,
+                           coords_list = coords_list,
+                           n_vals = n_sizes)
+  wsir_nsim_mat <- wsir_nsim_mat %>% rbind(jc_out[[1]][1,])
+  precast_nsim_mat <- precast_nsim_mat %>% rbind(jc_out[[2]][1,])
+  drsc_nsim_mat <- drsc_nsim_mat %>% rbind(jc_out[[3]][1,])
+  stamp_nsim_mat <- stamp_nsim_mat %>% rbind(jc_out[[4]][1,])
+}
+```
+
+```{r}
+nsim_xb1_df <- data.frame(means = c(colMeans(wsir_nsim_mat),
+                                    colMeans(precast_nsim_mat),
+                                    colMeans(drsc_nsim_mat),
+                                    colMeans(stamp_nsim_mat)),
+                         sds = c(colSds(wsir_nsim_mat),
+                                 colSds(precast_nsim_mat),
+                                 colSds(drsc_nsim_mat),
+                                 colSds(stamp_nsim_mat)),
+                         method = vec_rep_each(c("wSIR",
+                                                 "PRECAST",
+                                                 "DR.SC",
+                                                 "STAMP"), length(n_props)),
+                         n_prop = rep(n_props, 4))
+save(nsim_xb1_df, file = "nsim_xb1_df.RData")
+```
+
+### Sample 2
+
+STAMP
+
+```{r}
+load("take_mat_xb2.RData")
+xb2_coords <- readRDS(file = "xb2_coords.Rds") %>% as.data.frame()
+xb2_counts <- readRDS(file = "xb2_counts.Rds")
+
+for (i in 1:10) {
+  print(paste0("Current iteration: ", i))
+  take <- take_mat_xb2[,i]
+  counts_sampled <- xb2_counts[take,]
+  coords_sampled <- xb2_coords[take,]
+  stamp_out <- stamp_wrapper_complete(X = counts_sampled,
+                                      coords = as.matrix(coords_sampled))
+  save(stamp_out, file = paste0("stamp_xb2/stamp_out_r",i,".RData"))
+}
+```
+
+BCDC
+
+```{r}
+nrep <- 10
+
+bcdcs_wsir <- rep(0,nrep)
+bcdcs_precast <- rep(0,nrep)
+bcdcs_drsc <- rep(0,nrep)
+bcdcs_stamp <- rep(0,nrep)
+load("take_mat_xb2.RData")
+rownames(xb2_coords) <- rownames(xb2_exprs)
+
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ", i))
+  to_take <- take_mat_xb2[,i]
+  #current_counts <- xb1_coords[to_take,]
+  current_coords <- xb2_coords[to_take,]
+  current_ldo <- paste0("benchmark_xb2/lowdim_out_r",i,".RData")
+  load(current_ldo)
+  current_stamp_out <- paste0("benchmark_xb2/stamp_out_r",i,".RData")
+  load(current_stamp_out)
+  bcdc_out <- metric_bcdc(low_dims = lowdim_out, coords = current_coords)
+  bcdcs_wsir[i] <- bcdc_out$wSIR
+  bcdcs_precast[i] <- bcdc_out$PRECAST
+  bcdcs_drsc[i] <- bcdc_out$DRSC
+  bcdcs_stamp[i] <- energy::bcdcor(stamp_out[[1]], stamp_out[[2]])
+}
+
+means <- c(mean(bcdcs_wsir),
+                               mean(bcdcs_precast),
+                               mean(bcdcs_drsc),
+                               mean(bcdcs_stamp))
+sds <- c(sd(bcdcs_wsir),
+                               sd(bcdcs_precast),
+                               sd(bcdcs_drsc),
+                               sd(bcdcs_stamp))
+
+bcdc_xb2_df <- data.frame(method = c("wSIR",
+                                 "PRECAST",
+                                 "DR.SC",
+                                 "STAMP"),
+                      mean = means,
+                      sd = sds
+                      )
+
+save(bcdc_xb2_df, file = "bcdc_xb2_df.RData")
+```
+
+Neighbourhood similarity
+
+```{r}
+n_props <- c(0.005,0.01,0.05,0.1,0.2)
+
+# Embryo 1
+wsir_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+precast_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+drsc_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+stamp_nsim_mat <- matrix(NA, nrow = 0, ncol = length(n_props))
+
+load("take_mat_xb2.RData")
+nrep <- dim(take_mat_xb2)[2]
+for (i in 1:nrep) {
+  print(paste0("Current iteration: ",i))
+  load(paste0("benchmark_xb2/lowdim_out_r",i,".RData"))
+  load(paste0("benchmark_xb2/stamp_out_r",i,".RData"))
+  
+  precast_retained <- rownames(xb2_coords) %in% rownames(lowdim_out$PRECAST)
+  precast_coords <- xb2_coords[precast_retained,]
+  coords_list <- list(xb2_coords[take_mat_xb2[,i],], 
+                      precast_coords, 
+                      xb2_coords[take_mat_xb2[,i],],
+                      stamp_out$coords)
+  lowdim_out$STAMP = stamp_out$embedding
+  
+  n_sizes <- floor(n_props * nrow(xb2_coords[take_mat_xb2[,i],]))
+  
+  jc_out <- jaccard_lowdim(low_dims = lowdim_out,
+                           coords_list = coords_list,
+                           n_vals = n_sizes)
+  wsir_nsim_mat <- wsir_nsim_mat %>% rbind(jc_out[[1]][1,])
+  precast_nsim_mat <- precast_nsim_mat %>% rbind(jc_out[[2]][1,])
+  drsc_nsim_mat <- drsc_nsim_mat %>% rbind(jc_out[[3]][1,])
+  stamp_nsim_mat <- stamp_nsim_mat %>% rbind(jc_out[[4]][1,])
+}
+
+nsim_xb2_df <- data.frame(means = c(colMeans(wsir_nsim_mat),
+                                    colMeans(precast_nsim_mat),
+                                    colMeans(drsc_nsim_mat),
+                                    colMeans(stamp_nsim_mat)),
+                         sds = c(colSds(wsir_nsim_mat),
+                                 colSds(precast_nsim_mat),
+                                 colSds(drsc_nsim_mat),
+                                 colSds(stamp_nsim_mat)),
+                         method = vec_rep_each(c("wSIR",
+                                                 "PRECAST",
+                                                 "DR.SC",
+                                                 "STAMP"), length(n_props)),
+                         n_prop = rep(n_props, 4))
+save(nsim_xb2_df, file = "nsim_xb2_df.RData")
+```
 
 
