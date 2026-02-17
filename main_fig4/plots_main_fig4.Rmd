@@ -1,0 +1,345 @@
+---
+title: "plots_main_fig4"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Plots for main fig 4: exploration of ductal breast cancer dataset.
+
+Note: there is no analysis .rmd file for this figure since all the analysis is inside this document.
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(StabMap)
+library(zellkonverter)
+library(wSIR)
+library(patchwork)
+library(BiocParallel)
+library(bluster)
+library(pheatmap)
+library(scran)
+library(dplyr)
+library(ggrepel)
+library(ggplotify)
+
+set.seed(2024)
+```
+
+Note the dataset is too large to include in this github repo. To access the dataset, please refer to the data availability section of the manuscript.
+
+```{r}
+subset_lower.tri = function(m) {
+  mm = m[lower.tri(m, diag = FALSE)]
+  return(c(mm))
+}
+
+spe_raw <- readH5AD("../../data/xenium_breast_cancer/xenium_rep1.h5ad")
+spe_raw <- addPerCellQCMetrics(spe_raw, assay.type = "X")
+spe_raw <- spe_raw[, spe_raw$total >= 10 & spe_raw$detected >= 5]
+
+spe_raw <- logNormCounts(spe_raw, exprs_values = "X")
+
+ct = "DCIS_1"
+
+spe <- spe_raw[,spe_raw$Cluster == ct]
+# spe <- spe_raw
+
+spe <- addPerFeatureQCMetrics(spe, assay.type = "X")
+
+spe <- runPCA(spe)
+spe <- runUMAP(spe)
+
+exprs_raw = t(assay(spe, "logcounts"))
+coords_raw = as.data.frame(reducedDim(spe, "spatial"))
+
+out = wSIR(X = exprs_raw,
+           coords = coords_raw,
+           slices = 30,
+           alpha = 4,
+           maxDirections = 30,
+           varThreshold = 0.99,
+           optim_params = FALSE)
+
+varimportance = getVarImportance(out$directions)
+
+reducedDim(spe, "wSIR") <- out[[1]]
+
+spe <- runUMAP(spe, dimred = "wSIR", name = "UMAP_wSIR", BPPARAM = MulticoreParam(workers = 4))
+
+pts = 0
+
+set.seed(2024)
+m = clusterRows(reducedDim(spe, "wSIR"),
+                BLUSPARAM = TwoStepParam(first = KmeansParam(centers = 1000, iter.max = 10, nstart = 5),
+                                         second = NNGraphParam(cluster.fun = "louvain", k = 20)))
+spe$m <- m
+
+set.seed(2024)
+mp = clusterRows(reducedDim(spe, "PCA"),
+                 BLUSPARAM = TwoStepParam(first = KmeansParam(centers = 1000, iter.max = 10, nstart = 5),
+                                          second = NNGraphParam(cluster.fun = "louvain", k = 20)))
+spe$mp <- mp
+pcaimportance = getVarImportance(attr(reducedDim(spe, "PCA"), "rotation"))[rownames(spe)]
+```
+
+# Plot A
+
+For this section, the dataset is too large to include in this github repo. To access the data, please see the data availability section of the manuscript.
+
+Preparation
+```{r}
+xen <- readH5AD("../../data/xenium_breast_cancer/xenium_rep1.h5ad")
+xen <- addPerCellQCMetrics(xen, assay.type = "X")
+xen <- xen[, xen$total >= 10 & xen$detected >= 5]
+xen <- logNormCounts(xen, exprs_values = "X")
+
+library(DropletUtils)
+
+spat = read.csv("../../data/DCIS_Visium/spatial/tissue_positions.csv", header = TRUE, row.names = 1)
+
+# read in the visium annotation
+annot = read.delim("../../data/DCIS_Visium/Cell_Barcode_Type_Matrices_Visium.tsv", row.names = 1)
+
+
+spe = read10xCounts("../../data/DCIS_Visium/filtered_feature_bc_matrix")
+colnames(spe) <- spe$Barcode
+rownames(spe) <- make.unique(rowData(spe)$Symbol)
+reducedDim(spe, "spatial") <- as.data.frame(as.matrix(spat[spe$Barcode, c("array_row", "array_col")]) %*% matrix(c(1,0, 0, 1),2, 2))
+
+spe$Annotation <- annot[colnames(spe), "Annotation"]
+
+spe <- logNormCounts(spe)
+
+spe <- addPerFeatureQCMetrics(spe)
+spe <- spe[rowData(spe)$detected > 5,]
+
+genes = intersect(rownames(spe), rownames(xen))
+
+spe <- spe[genes,]
+
+out = calculatewSIR(x = spe,
+                    dimred = "spatial",
+                    slices = 20,
+                    alpha = 4,
+                    maxDirections = 30,
+                    varThreshold = 0.99,
+                    optim_params = FALSE)
+
+reducedDim(spe, "wSIR") <- out$scores
+
+spe <- runUMAP(spe, dimred = "wSIR", name = "wSIR_UMAP")
+
+spe <- runPCA(spe)
+spe <- runUMAP(spe, dimred = "PCA", name = "PCA_UMAP")
+
+spe <- addPerCellQCMetrics(spe)
+
+
+spe$visium_cluster = clusterRows(reducedDim(spe, "wSIR"), BLUSPARAM = NNGraphParam(cluster.fun = "louvain", k = 20))
+```
+
+Plot
+```{r}
+g = plotReducedDim(spe, "spatial", colour_by = "visium_cluster",point_shape = 16, point_alpha = 1, point_size = 2) + 
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  # guides(colour = guide_legend(title = "", override.aes = list(size = 7)))
+  theme(legend.position = "none") + 
+  ggtitle("Visium DCIS")
+```
+
+# Plot B
+
+```{r}
+g = plotReducedDim(spe, "wSIR_UMAP", colour_by = "visium_cluster") + 
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  guides(colour = guide_legend(title = "", override.aes = list(size = 6))) + 
+  ggtitle("Visium DCIS")
+```
+
+# Plot C
+
+```{r}
+g = plotReducedDim(spe, "spatial", colour_by = "Annotation",point_shape = 16, point_alpha = 1, point_size = 2) + 
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  guides(colour = guide_legend(title = "", override.aes = list(size = 7))) +
+  theme(legend.position = "none") + 
+  ggtitle("Visium DCIS")
+```
+
+# Plot D
+
+```{r}
+g = plotReducedDim(spe, "wSIR_UMAP", colour_by = "Annotation") + 
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  # guides(colour = guide_legend(title = "", override.aes = list(size = 6))) + 
+  ggtitle("Visium DCIS") + 
+  theme(legend.position = "none")
+```
+
+# Plot E
+
+```{r}
+p = ComplexHeatmap::Heatmap(log10(unclass(table(spe$visium_cluster, spe$Annotation))+1), 
+                            column_title = "Annotation",
+                            row_title = "wSIR Clusters",
+                            col = colorRampPalette(c("white", "orange", "red", "black"))(100),
+                            heatmap_legend_param = list(title = "Number of\nspots\n(log10)")
+)
+
+g = as.ggplot(p)
+```
+
+# Plot H
+
+Note the plots are no longer in alphabetical order. This is so the code can be run in the order it appears in this document.
+
+```{r}
+library(Rfast)
+
+proj = wSIR::projectWSIR(wsir = out, newdata = t(assay(xen, "logcounts")[genes,]))
+
+reducedDim(xen, "wSIR_proj") <- proj
+
+xen <- runPCA(xen)
+xen <- runUMAP(xen, dimred = "PCA", name = "PCA_UMAP")
+xen <- runUMAP(xen, dimred = "wSIR_proj", name = "wSIR_proj_UMAP")
+
+g = plotReducedDim(xen, "wSIR_proj_UMAP", colour_by = "Cluster") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  guides(colour = guide_legend(title = "", override.aes = list(size = 7))) + 
+  ggtitle("Xenium DCIS mapped onto Visium embedding") +
+  NULL
+```
+
+# Plot J
+
+```{r}
+xen$tmp <- ifelse(xen$Cluster == "Macrophages_1", "mac", "Not")
+xen$selected <- ifelse(reducedDim(xen, "wSIR_proj_UMAP")[,1] > 0 &
+                         reducedDim(xen, "wSIR_proj_UMAP")[,1] < 4 &
+                         reducedDim(xen, "wSIR_proj_UMAP")[,2] > 3, "selected", "not")
+
+xen$mac_sub <- ifelse(xen$Cluster == "Macrophages_1", "Macrophages_1", "Other")
+xen$mac_sub[xen$selected == "selected"] <- "Macrophages_1 subset"
+
+g = plotReducedDim(xen[,rev(order(xen$mac_sub))], "spatial", colour_by = "mac_sub",
+                   point_size = 0.5) + 
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  xlab("") + 
+  ylab("") + 
+  theme(aspect.ratio = 1) +
+  # guides(colour = guide_legend(title = "", override.aes = list(size = 7)))
+  theme(legend.position = "bottom") + 
+  # scale_colour_manual(values = setNames(c("black", "grey90"), c("selected", "not")))
+  scale_colour_manual(values = setNames(c("black", "grey90", "blue"), c("Macrophages_1 subset", "Other", "Macrophages_1"))) + 
+  guides(colour = guide_legend(title = "", override.aes = list(size = 15), theme = theme(legend.text = element_text(size = 15))))
+```
+
+# Plot I
+
+```{r}
+mk = findMarkers(xen,
+                 groups = droplevels(factor(xen$selected)),
+                 direction = "any")
+DE_df = cbind(mk[["selected"]], gene = rownames(mk[["selected"]]))
+g = ggplot(DE_df, aes(x = summary.logFC, y = -log10(p.value+1e-100))) + 
+  geom_point(colour = "grey") + 
+  geom_text_repel(aes(label = gene), data = DE_df[DE_df$Top <= 10 & DE_df$logFC.not > 0,]) + 
+  xlab("Log Fold Change") + 
+  ylab("-log(P-Value)") + 
+  # ggtitle(paste0("wSIR Cluster ", clusts[1],
+  #                " vs Cluster ", clusts[2])) + 
+  theme_classic() + 
+  ggtitle("Macrophages_1 subset marker genes")
+```
+
+
+# Plot F
+
+```{r}
+varimportance = getVarImportance(out$directions)
+pcaimportance = getVarImportance(attr(reducedDim(spe, "PCA"), "rotation"))
+
+importance_df = data.frame(PCA = pcaimportance[genes], wSIR = varimportance[genes], gene = genes)
+
+g = ggplot(importance_df, aes(x = PCA, y = wSIR)) + 
+  theme_classic() +
+  geom_point(colour = "grey") + 
+  geom_text_repel(aes(label = gene), data = subset(importance_df, PCA > 0.7 | wSIR > 0.3 | PCA+wSIR > 0.6),
+                  size = 2) +
+  xlab("PCA gene relevance") +
+  ylab("wSIR gene relevance") +
+  theme(axis.title = element_text(size = 10)) +
+  # theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  # xlab("") + 
+  # ylab("") + 
+  theme(aspect.ratio = 1) +
+  NULL
+```
+
+# Plot G
+
+```{r}
+g = wrap_plots(sapply(c("MMP12", "OPRPN", "POSTN", "PTGDS", "SFRP4"), function(gene) {
+  plotReducedDim(spe, "spatial", colour_by = gene, point_shape = 16, point_alpha = 1, point_size = 1.35) + 
+    guides(colour = guide_legend(override.aes = list(size = 10), title = "")) + 
+    ggtitle(gene) +
+    theme(axis.text = element_blank()) +
+    theme(axis.line = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    xlab("") + 
+    ylab("") + 
+    theme(aspect.ratio = 1) +
+    theme(legend.position = "none")
+}, simplify = FALSE), nrow = 1)
+```
+
+
+
+
+
+
+
+
