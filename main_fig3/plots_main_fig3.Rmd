@@ -432,3 +432,87 @@ Plot I
 
 Plot J
 
+Note this is analysis and plotting together.
+
+```{r}
+library(ggplot2)
+library(patchwork)
+
+coord_df <- readRDS("coord_data.Rds")
+
+colors <- setNames(
+    c("#635547", "#8EC792", "#9e6762", "#FACB12", "#3F84AA", "#0F4A9C",
+      "#ff891c", "#EF5A9D", "#C594BF", "#DFCDE4", "#139992", "#65A83E",
+      "#8DB5CE", "#005579", "#C9EBFB", "#B51D8D", "#532C8A", "#8870ad",
+      "#cc7818", "#FBBE92", "#EF4E22", "#f9decf", "#c9a997", "#C72228"),
+    c("Allantois", "Anterior somitic tissues", "Blood progenitors",
+      "Cardiomyocytes", "Cranial mesoderm", "Definitive endoderm",
+      "Dermomyotome", "Endothelium", "Erythroid", "ExE endoderm",
+      "Forebrain/Midbrain/Hindbrain", "Gut tube", "Haematoendothelial
+      progenitors", "Intermediate mesoderm", "Lateral plate mesoderm",
+      "Low quality", "Mixed mesenchymal mesoderm", "Neural crest", "NMP",
+      "Presomitic mesoderm", "Sclerotome", "Spinal cord", "Splanchnic mesoderm",
+      "Surface ectoderm"))
+
+plt_function <- function(df, x_label, y_label, title){
+    plt_out <- ggplot(coord_df, aes(x = get(x_label), y = -get(y_label))) +
+        geom_point(size = 0.5, aes(colour = celltype)) +
+        scale_color_manual(values = colors) +
+        ggtitle(title) +
+        labs(x = "X", y = "Y") +
+        guides(color = guide_legend(title = "Celltypes", ncol = 1,
+                                    override.aes = list(size = 3))) +
+        theme_classic() +
+        theme(axis.title  = element_blank(),
+              legend.text = element_text(size = 12))}
+
+
+### make together with table
+tangram_results <- tibble(
+  tangram_input = c("Genes (count)", "PCA embedding", "wSIR embedding"),
+  input_dimensions = c(351, 303, 9),
+  mean_jsd_20_neighbors = c(0.680, 0.758, 0.679),
+  mean_spearman_correlation = c(0.049, 0.013, 0.129),
+  bcdc = c(0.056, 0.086, 0.135),
+  mse = c(2.884, 2.738, 2.654),
+  time_seconds = c(163.86, 85.25, 69.21)
+)
+
+
+library(gt)
+library(patchwork)
+library(grid)
+
+gt_tbl <- gt(tangram_results)
+
+g <- grid::grid.grabExpr(print(gt_tbl))  # capture as grob
+
+p_table <- wrap_elements(full = gridExtra::tableGrob(
+  tangram_results %>%
+    rename(
+      `Tangram input` = tangram_input,
+      `Input dimensions` = input_dimensions,
+      `Mean JSD (20 neighbors)` = mean_jsd_20_neighbors,
+      `Mean Spearman’s correlation` = mean_spearman_correlation,
+      `BCDC` = bcdc,
+      `MSE` = mse,
+      `Time (seconds)` = time_seconds
+    ),
+  rows = NULL
+))
+
+combined_plot <- (plt_function(coord_df, "x_orig",       "y_orig",       "True coordinates - Mouse embryo 2") |
+                    plt_function(coord_df, "x_pred_genes", "y_pred_genes", "Predicted coordinates - Count")) /
+  (plt_function(coord_df, "x_pred_wsir",  "y_pred_wsir",  "Predicted coordinates - wSIR") |
+     plt_function(coord_df, "x_pred_pca",   "y_pred_pca",   "Predicted coordinates - PCA")) +
+  plot_layout(guides = "collect")
+
+
+# 3) Combine
+combined_plot / p_table +
+  plot_layout(heights = c(8, 8, 2))
+
+
+ggsave(filename = "figure3j.pdf", width = 20, height = 10)
+```
+
