@@ -128,4 +128,5 @@ save(umap_pca_hm, file = "response_figs/response_fig_data/umap_pca_hm.RData")
 save(umap_wsir_hm, file = "response_figs/response_fig_data/umap_wsir_hm.RData")
 ```
 
+NOTE: sce.sling_pca was over the github file size limit, therefore we were not able to include that results object. It does not take long to run the code above to create it if you want to use it. 
 

@@ -1,0 +1,236 @@
+---
+title: "plots_supp_fig5"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Plots for supp fig 5 trajectory analysis
+
+Load dataa
+
+```{r}
+load("sce.sling_pca.RData")
+load("sce.sling.RData")
+load("sce_merged.RData")
+load("umap_pca_hm.RData")
+load("umap_wsir_hm.RData")
+load("thymus_sample_sizes.RData")
+```
+
+Trajectory UMAPs
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Build one long table: method (wsir/pca) × colour_var (cma/pseudotime)
+df_long <- bind_rows(
+  tibble(
+    method = "wSIR",
+    UMAP1  = umap_wsir_hm$layout[, 1],
+    UMAP2  = umap_wsir_hm$layout[, 2],
+    cma    = sce_merged$cma_v2,
+    pseudotime = sce.sling$slingPseudotime_1
+  ),
+  tibble(
+    method = "PCA",
+    UMAP1  = umap_pca_hm$layout[, 1],
+    UMAP2  = umap_pca_hm$layout[, 2],
+    cma    = sce_merged$cma_v2,
+    pseudotime = sce.sling$slingPseudotime_1
+  )
+) |>
+  pivot_longer(
+    cols = c(cma, pseudotime),
+    names_to = "colour_var",
+    values_to = "colour_value"
+  ) |>
+  mutate(
+    method = factor(method, levels = c("wSIR", "PCA")),
+    colour_var = factor(colour_var, levels = c("cma", "pseudotime"),
+                        labels = c("CMA", "Pseudotime"))
+  )
+
+cma_limits <- range(
+  df_long$colour_value[df_long$colour_var == "CMA"],
+  na.rm = TRUE
+)
+
+pseudo_limits <- range(
+  df_long$colour_value[df_long$colour_var == "Pseudotime"],
+  na.rm = TRUE
+)
+
+df_cma <- df_long %>%
+  filter(colour_var == "CMA") %>%
+  mutate(colour_var = factor(colour_var, levels = c("CMA", "Pseudotime")))
+
+df_pseudo <- df_long %>%
+  filter(colour_var == "Pseudotime") %>%
+  mutate(colour_var = factor(colour_var, levels = c("CMA", "Pseudotime")))
+
+```
+
+```{r}
+
+p_both <- ggplot() +
+  # --- Row 1: CMA ---
+  geom_point(
+    data = df_cma,
+    aes(UMAP1, UMAP2, colour = colour_value),
+    size = 0.5
+  ) +
+  scale_colour_viridis_c(
+    option = "D",
+    name   = "CMA",
+  ) +
+
+  ggnewscale::new_scale_colour() +
+
+  # --- Row 2: Pseudotime ---
+  geom_point(
+    data = df_pseudo,
+    aes(UMAP1, UMAP2, colour = colour_value),
+    size = 0.5
+  ) +
+  scale_colour_viridis_c(
+    option = "C",
+    name   = "Pseudotime",
+  ) +
+  theme_bw(base_size = 20) +
+  labs(
+    x = "UMAP1 (post-harmony)",
+    y = "UMAP2 (post-harmony)"
+  ) +
+  guides(
+    colour  = guide_colourbar(
+      barwidth  = unit(10, "cm"),
+      barheight = unit(0.5, "cm")
+    ),
+    colour2 = guide_colourbar(  
+      barwidth  = unit(10, "cm"),
+      barheight = unit(0.5, "cm")
+    )
+  ) +
+  facet_grid(colour_var ~ method) +
+  theme_bw(base_size = 20) +
+  labs(
+    x = "UMAP1 (post-harmony)",
+    y = "UMAP2 (post-harmony)"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+  )
+```
+
+```{r}
+p1 <- df_cma %>% ggplot(aes(x = UMAP1, y = UMAP2, colour = colour_value)) +
+  geom_point(size = 0.5) +
+  facet_wrap(~method) +
+  scale_colour_viridis_c(name = "CMA") +
+  theme_classic(base_size = 20)
+ 
+
+
+p2 <- df_pseudo %>% ggplot(aes(x = UMAP1, y = UMAP2, colour = colour_value)) +
+  geom_point(size = .5) +
+  facet_wrap(~method) +
+  scale_colour_continuous(name = "Pseudotime", palette = c("#FEE0D2", "#FC9272", "#DE2D26")) +
+  theme_classic(base_size = 20)
+ 
+
+p1 / p2
+
+
+
+ggsave(
+  plot = p1/p2,
+  filename = "traj_umap_grid.pdf",
+  width = 10, height = 8
+)
+
+ggsave(
+  plot = p1/p2,
+  filename = "traj_umap_grid.png",
+  width = 10, height = 8, dpi = 600
+)
+
+
+
+```
+
+Spatial plots
+
+```{r}
+library(ggplot2)
+library(patchwork)
+
+base_theme <- function(show_legend) {
+  theme_classic(base_size = 20) +
+  theme(
+    legend.title = element_blank(),
+     # remove axis ticks, labels, titles
+    axis.title = element_blank(),
+    axis.text  = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = if (show_legend) "top" else "none"
+  )
+}
+
+one_traj_row <- function(i, n = 10) {
+  sce_wsir <- get(paste0("sce.sling", i))
+  sce_pca  <- get(paste0("sce.sling_pca", i))
+
+  title_wsir <- if (i == 1) "wSIR Pseudotime" else NULL
+  title_pca  <- if (i == 1) "PCA Pseudotime"  else NULL
+  title_cma  <- if (i == 1) "CMA axis"        else NULL
+
+  show_legend <- (i == n)
+
+  p_wsir_pst <- plotReducedDim(
+    sce_wsir, "spatial", colour_by = "slingPseudotime_1"
+  ) +
+    labs(title = title_wsir, x = "Spatial 1", y = "Spatial 2") +
+    base_theme(show_legend)
+
+  p_pca_pst <- plotReducedDim(
+    sce_pca, "spatial", colour_by = "slingPseudotime_1"
+  ) +
+    labs(title = title_pca, x = "Spatial 1", y = "Spatial 2") +
+    base_theme(show_legend)
+
+  p_cma <- plotReducedDim(
+    sce_wsir, "spatial", colour_by = "cma_v2"
+  ) +
+    labs(title = title_cma, x = "Spatial 1", y = "Spatial 2") +
+    base_theme(show_legend)
+
+  p_wsir_pst | p_pca_pst | p_cma
+}
+
+p_grid_9x3 <- wrap_plots(
+  lapply(1:9, one_traj_row),
+  ncol = 1
+)
+
+ggsave(
+  "traj_grid_9x3.pdf",
+  p_grid_9x3,
+  width = 16,
+  height = 36
+)
+```
+
+
+
+
+
+
+
