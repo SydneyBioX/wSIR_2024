@@ -11,6 +11,135 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Analysis for supp fig 6: comparison vs spatial DR methods on PRECAST's paper's simulated data
 
+Packages and data
 
+Note: you will need to download the data yourself to run this analysis. See the data availability section of the manuscript. 
+```{r}
+library(anndata)
+library(tidyverse)
+library(PRECAST)
+library(SeuratObject)
+library(wSIR)
+library(DR.SC)
+library(vctrs) # for vec_rep_each function
+library(SpatialPCA)
+library(doBy)
+library(nnet)
+library(DescTools)
+library(scran)
+library(scuttle) 
+library(scater)
+library(patchwork)
+source("spatial_benchmark_functions.R")
+dlpfc_spe <- readRDS("dski/nobackup/biostat/datasets/SpatialTranscriptomics/Visium_DLPFC/spe_DLPFC.Rds")
+```
+
+STAMP analysis
+
+set up python
+```{r}
+use_python("/Library/Frameworks/Python.framework/Versions/3.8/bin/python3") # run this one
+test_file <- "stamp_wrapper.py"
+source_python(test_file)
+
+stamp_wrapper_complete <- function(X, coords) {
+  out <- stamp_wrapper_fn(counts = as.matrix(X), 
+                          coordinates = coords)
+  stamp_cells_taken <- as.numeric(out[[2]]) + 1 # +1 since python 0-indexed
+  stamp_coords_taken <- coords[stamp_cells_taken,]
+  return(list(embedding = out[[1]],
+              coords = stamp_coords_taken))
+}
+```
+
+run STAMP analysis
+
+```{r}
+samples_vec <- unique(spe_DLPFC@colData$sample)
+psR2_stamp_vals <- c()
+ 
+for (current_sample in samples_vec) {
+  # extract this sample
+  spe_DLPFC_currentsample <- spe_DLPFC[,spe_DLPFC@colData$sample == current_sample]
+  
+  # filter HVGs
+  modelled_var_v1 <- modelGeneVar(spe_DLPFC_currentsample@assays@data$logcounts)
+  topgenes_v1 <- scran::getTopHVGs(modelled_var_v1, n = 500)
+  spe_DLPFC_currentsample <- spe_DLPFC_currentsample[topgenes_v1,]
+  
+  # extract current coords and counts
+  coords1 <- spe_DLPFC_currentsample@int_colData@listData$spatialCoords
+  counts1 <- t(spe_DLPFC_currentsample@assays@data$counts)
+  domains1 <- spe_DLPFC_currentsample@colData$layer_guess_reordered_short
+
+  stamp_out <- stamp_wrapper_complete(X = counts1,
+                                      coords = as.matrix(coords1))
+  stamp_cells <- domains1[(spe_DLPFC_currentsample@colData$spot_ID %in% rownames(stamp_out$coords))]
+  fit_stamp <- multinom(stamp_cells ~ as.matrix(stamp_out$embedding), maxit = 1000, MaxNWts = 2000,model = TRUE, verbose = FALSE)
+
+  psR2_stamp_vals <- psR2_stamp_vals %>% append(PseudoR2(fit_stamp, c("McFaddenAdj")))
+}
+```
+
+Other method analysis
+
+```{r}
+samples_vec <- unique(spe_DLPFC@colData$sample)
+
+psR2_wsir_vals <- c()
+psR2_precast_vals <- c()
+psR2_drsc_vals <- c()
+psR2_spca_vals <- c()
+ 
+for (current_sample in samples_vec) {
+  # extract this sample
+  spe_DLPFC_currentsample <- spe_DLPFC[,spe_DLPFC@colData$sample == current_sample]
+  
+  # filter HVGs
+  modelled_var_v1 <- modelGeneVar(spe_DLPFC_currentsample@assays@data$logcounts)
+  topgenes_v1 <- scran::getTopHVGs(modelled_var_v1, n = 500)
+  spe_DLPFC_currentsample <- spe_DLPFC_currentsample[topgenes_v1,]
+  
+  # extract current exprs, coords, counts
+  exprs1 <- t(spe_DLPFC_currentsample@assays@data$logcounts)
+  coords1 <- spe_DLPFC_currentsample@int_colData@listData$spatialCoords
+  counts1 <- t(spe_DLPFC_currentsample@assays@data$counts)
+  domains1 <- spe_DLPFC_currentsample@colData$layer_guess_reordered_short
+  
+  current_k <- length(unique(spe_DLPFC_currentsample@colData$layer_guess_reordered_short))
+
+  # create low dims
+  lowdim_out <- lowdims_resub(exprs = exprs1,
+                              coords = coords1,
+                              K = current_k)
+  spca_out <- spca_wrapper(counts = t(counts1), coords = coords1)
+  
+  # extract spatial domains for precast and spca
+  precast_domains <- domains1[(spe_DLPFC_currentsample@colData$spot_ID %in% rownames(lowdim_out$PRECAST))]
+  spca_domains <- domains1[(spe_DLPFC_currentsample@colData$spot_ID %in% rownames(spca_out$coords))]
+  
+  # fit multilogistic regression models on each low dim
+  fitwsir <- multinom(domains1 ~ lowdim_out$wSIR, maxit = 1000, MaxNWts = 2000,model = TRUE, verbose = FALSE)
+  fitprecast <- multinom(precast_domains ~ lowdim_out$PRECAST, maxit = 1000, MaxNWts = 2000,model = TRUE, verbose = FALSE)
+  fitdrsc <- multinom(domains1 ~ lowdim_out$DRSC, maxit = 1000, MaxNWts = 2000,model = TRUE, verbose = FALSE)
+  fitspca <- multinom(spca_domains ~ spca_out$projected, maxit = 1000, MaxNWts = 2000,model = TRUE, verbose = FALSE)
+  
+  # save out the McF-psR2 value from each method
+  psR2_wsir_vals <-  psR2_wsir_vals %>% append(PseudoR2(fitwsir, c("McFaddenAdj")))
+  psR2_precast_vals <- psR2_precast_vals %>% append(PseudoR2(fitprecast, c("McFaddenAdj")))
+  psR2_drsc_vals <- psR2_drsc_vals %>% append(PseudoR2(fitdrsc, c("McFaddenAdj")))
+  psR2_spca_vals <- psR2_spca_vals %>% append(PseudoR2(fitspca, c("McFaddenAdj")))
+}
+
+#load("DLPFC_results/psR2_stamp_vals.RData")
+psR2_dlpfc_df_full <- data.frame(psR2 = c(psR2_wsir_vals,
+                                          psR2_precast_vals,
+                                          psR2_drsc_vals,
+                                          psR2_spca_vals,
+                                          psR2_stamp_vals),
+                                  sample = rep(samples_vec, 5),
+                                  method = vec_rep_each(c("wSIR", "PRECAST", "DR.SC", "SpatialPCA", "STAMP"), nsamp))
+save(psR2_dlpfc_df_full, file = "psR2_dlpfc_df_full.RData")
+```
 
 
