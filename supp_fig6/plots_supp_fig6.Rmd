@@ -1,0 +1,56 @@
+---
+title: "plots_supp_fig6"
+author: '500455892'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Plots for supp fig 6
+
+```{r}
+load("psR2_dlpfc_df_full.RData")
+
+# boxplot
+dlpfc_psR2_boxplot <- ggplot(psR2_dlpfc_df_full, aes(x = method, y = psR2, colour = method)) +
+  geom_boxplot() +
+  theme_classic() +
+  labs(x = "DR method", y = "pseudo-R2", colour = "") +
+  theme(legend.position = "none",
+        text = element_text(size = 15)) +
+  scale_colour_manual(values = dlpfc_colours)
+#dlpfc_psR2_boxplot
+
+dlpfc_psR2_lineplot <- ggplot(psR2_dlpfc_df_full, aes(x = as.factor(sample), y = psR2, colour = method, shape = method)) +
+  geom_point() +
+  theme_classic(base_size = 20) +
+  labs(x = "Sample", y = "pseudo-R2", colour = "DR method") +
+  scale_colour_manual(name = "DR method", values = dlpfc_colours) +
+  scale_shape_manual(name = "DR method", values = c(14:18)) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5))
+dlpfc_psR2_lineplot
+#ggsave(plot = dlpfc_psR2_lineplot, filename = "response_figs/supp_fig4/dlpfc_psR2_lineplot.pdf")
+
+```
+
+```{r}
+library(patchwork)
+p1 <- ggpubr::ggarrange(dlpfc_psR2_lineplot, dlpfc_ari_lineplot, 
+                  nrow = 1, ncol = 2, common.legend = TRUE, legend = "bottom")
+
+p2 <- ggpubr::ggarrange(dlpfc_psR2_boxplot, dlpfc_ari_boxplot, 
+                  nrow = 1, ncol = 2, common.legend = TRUE, legend = "none")
+
+
+wrap_plots(p2, p1, ncol = 1, nrow = 2, heights = c(8, 10))
+
+ggsave(filename = "dlpfc_all_plots.pdf", width = 14, height = 6)
+ggsave(filename = "dlpfc_all_plots.png", width = 14, height = 6)
+
+```
+
