@@ -28,6 +28,147 @@ Analysis for main fig 2: donut simulation, parameter robustness, benchmarking wS
 
 # Donut simulation
 
+Note this contains the code to perform the analysis and create the plot. 
+
+```{r}
+# pls function
+library(FNN)
+library(Matrix)
+library(pls)
+library(tidyverse)
+
+pls_wrap = function(X, coords, ...) {
+  # return the scores from pls where
+  # X is a cells x genes expression matrix (explanatory variables)
+  # Y is a cells x response(s) matrix
+  # ... addition arguments to plsr, e.g. ncomp may be wanted to identify the 
+  # number of components to return
+  
+  plsr_model <- plsr(coords ~ X, ...)
+  
+  return(list(plsr_model$scores,
+              plsr_model$loadings,
+              plsr_model$ncomp,
+              plsr_model
+  ))
+  
+}
+
+n = 1000
+set.seed(200)
+rvals = runif(n, 0.1, 1)
+thetavals = runif(n, -pi, pi) + 0.1
+
+
+xvals = rvals*cos(thetavals) 
+yvals = rvals*sin(thetavals)
+
+# create some genes that are uncorrelated with space but have high variation
+p_nonspatial = 10
+nonspatialgenes = matrix(rnorm(n*p_nonspatial, 0, 5), p_nonspatial, n)
+# nonspatialgenes = t(matrix(rnorm(n*p_nonspatial, nonspvals, 5), n, p_nonspatial))
+#dim(nonspatialgenes)
+
+# create some genes that are correlated with space but have low variation
+p_r = 5
+spatialgenes_r = t(matrix(rnorm(n*p_r, rvals, 0.01), n, p_r))
+#dim(spatialgenes_r)
+
+p_th = 5
+spatialgenes_t = t(matrix(rnorm(n*p_th, thetavals, 0.5), n, p_th))
+#dim(spatialgenes_t)
+
+# put together the data
+X = t(rbind(nonspatialgenes, spatialgenes_r, spatialgenes_t))
+
+cn <- c()
+for (i in 1:10) {
+  cn <- cn %>% append(paste0("non_spatial_gene_", i))
+}
+for (i in 1:5) {
+  cn <- cn %>% append(paste0("radius_gene_", i))
+}
+for (i in 1:5) {
+  cn <- cn %>% append(paste0("angle_gene_", i))
+}
+colnames(X) <- cn
+coords = data.frame(x = xvals, y = yvals)
+
+### Graph PCA
+# Number of neighbors
+k <- 6
+# Get k-nearest neighbors
+knn_result <- get.knn(coords, k = k)
+# Create the adjacency matrix (sparse format)
+adj_matrix <- sparseMatrix(
+  i = rep(1:nrow(coords), each = k),
+  j = as.vector(knn_result$nn.index),
+  x = 1
+)
+# Create the degree matrix (diagonal matrix)
+degree_matrix <- Diagonal(x = rowSums(adj_matrix))
+# Compute the Laplacian matrix
+laplacian_matrix <- degree_matrix - adj_matrix
+# Convert to full matrix if needed
+graphL <- as.matrix(laplacian_matrix)
+lambda <- 0.5
+G <- Diagonal(n) + lambda*graphL
+Ginv <- Rfast::spdinv(as.matrix(G))
+Expr <- scale(X)
+C <- t(Expr) %*% Ginv %*% Expr
+eigenC <- eigen(C, symmetric = T)
+out_GPCA <- list()
+out_GPCA$loadings <- eigenC$vectors[, 1:2]
+out_GPCA$scores <- Ginv %*% Expr %*% out_GPCA$loadings
+
+out = wSIR:::wSIRSpecifiedParams(X, 
+                                 coords, 
+                                 varThreshold = 0.95,
+                                 alpha = 4,
+                                 slices = 6)
+out_pc = princomp(X)
+out_pls = pls_wrap(X, as.matrix(coords))
+
+library(MASS)
+tile_lda = wSIR:::spatialAllocator(coords, slices = 6)[,3]
+mod_lda = lda(tile_lda~., data = as.data.frame(X))
+out_lda <- predict(mod_lda, as.data.frame(X))
+out_lda$scores <- out_lda$x
+
+df_all <- data.frame(coords,
+                     wSIR = out$scores[, 1:2],
+                     PLS = out_pls[[1]][, 1:2],
+                     PC = out_pc$scores[, 1:2], 
+                     GPCA = out_GPCA$scores[, 1:2],
+                     LDA = out_lda$scores[,1:2],
+                     thetavals = thetavals, rvals = rvals) %>%
+  mutate(across(3:12, scale)) %>%
+  mutate(wSIR.2 = -wSIR.2, wSIR.1 = -wSIR.1) %>%
+  pivot_longer(cols = wSIR.1:rvals, names_to = "dir", values_to = "value") %>%
+  mutate(dir = factor(dir, levels = c("thetavals", "wSIR.1", "GPCA.1", "LDA.LD1", "PLS.Comp.1","PC.Comp.1",
+                                      "rvals", "wSIR.2", "GPCA.2", "LDA.LD2", "PLS.Comp.2", "PC.Comp.2"),
+                      labels = c("Angle", "wSIR1", "GPCA1", "LDA1", "PLS1", "PC1",
+                                      "Radius", "wSIR2", "GPCA2", "LDA2", "PLS2", "PC2")))
+g = df_all %>% ggplot(aes(x = x, y = y, colour = abs(value))) +
+  geom_point(size = 1.5) +
+  facet_wrap(vars(dir), nrow = 2) +
+  # scale_colour_viridis_c() +
+  scale_colour_gradient(low = "#0077FF", high = "#FFCC00") +
+  labs(x = "Y1", y = "Y2", colour = "") +
+  theme_classic(base_size = 18 ) + 
+  theme(axis.text.x =element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank()) + 
+  theme(legend.position = "bottom") +
+  theme(strip.background = element_rect(colour = NA)) +
+  guides(colour = guide_colorbar(title = "Absolute score values")) +
+  theme(aspect.ratio = 1)
+
+ggsave(g, file = "donut_res_plot_color_abs_value.pdf", width = 14, height =  6)
+```
+
+
 # Parameter robustness
 
 ```{r}

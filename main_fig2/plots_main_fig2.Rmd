@@ -13,6 +13,8 @@ Plots for main fig 2: donut simulation, parameter robustness, benchmarking wSIR 
 
 # Donut simulation
 
+The code to create this plot is in the main figure 2 analysis file because no data needed to be saved.
+
 # Parameter robustness
 
 Embryo
