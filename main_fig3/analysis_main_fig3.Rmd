@@ -157,19 +157,19 @@ fig4_colours <- c(
   "PCA" = "burlywood1",
   "WSIR" = "blue")
 
-df_metrics$method <- row.names(df_metrics)
-df_metrics %>%
-  filter(method != "wsir") %>%
-  mutate(method = factor(method, labels = c("Count", "LogCount", "PCA", "WSIR"))) %>%
-  pivot_longer(cols = -method, names_to = "metric", values_to = "values") %>%
-  mutate(metric = factor(metric, labels = c("BCDC", "MSE","Time (seconds)"))) %>%
-  ggplot(aes(x = method, y = values, fill = method)) + 
-  geom_col() +
-  facet_wrap(~metric, scales = "free_y") + 
-  scale_fill_manual(values = fig4_colours) + 
-  theme_classic(base_size = 20) +
-  theme(legend.position = "none") +
-  labs(x = "DR method", y = "")
+# df_metrics$method <- row.names(df_metrics)
+# df_metrics %>%
+#   filter(method != "wsir") %>%
+#   mutate(method = factor(method, labels = c("Count", "LogCount", "PCA", "WSIR"))) %>%
+#   pivot_longer(cols = -method, names_to = "metric", values_to = "values") %>%
+#   mutate(metric = factor(metric, labels = c("BCDC", "MSE","Time (seconds)"))) %>%
+#   ggplot(aes(x = method, y = values, fill = method)) + 
+#   geom_col() +
+#   facet_wrap(~metric, scales = "free_y") + 
+#   scale_fill_manual(values = fig4_colours) + 
+#   theme_classic(base_size = 20) +
+#   theme(legend.position = "none") +
+#   labs(x = "DR method", y = "")
   
 #ggsave("../../figures/figure_4/raw/embryo_new_tangram.pdf", width = 18, height = 10)
 
