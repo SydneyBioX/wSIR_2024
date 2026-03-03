@@ -430,6 +430,8 @@ g = plotDots(endo, features = unique(endomarkers), group = "endo_cluster", cente
 
 Plot I
 
+See results objects in embryo_tangrams_metrics.Rdata file. 
+
 Plot J
 
 Note this is analysis and plotting together.
