@@ -12,6 +12,19 @@ knitr::opts_chunk$set(echo = TRUE)
 Plots for supp fig 6
 
 ```{r}
+dlpfc_colours <- c("SpatialPCA" = "grey",
+                       "PRECAST" = "lightgrey",
+                       "DR.SC" = "darkgrey",
+                       "STAMP" = "grey2",
+                       "wSIR" = "blue")
+```
+
+
+```{r}
+library(ggpubr)
+library(tidyverse)
+library(vctrs)
+vjust_amount <- 0.2
 load("psR2_dlpfc_df_full.RData")
 
 # boxplot
@@ -21,7 +34,12 @@ dlpfc_psR2_boxplot <- ggplot(psR2_dlpfc_df_full, aes(x = method, y = psR2, colou
   labs(x = "DR method", y = "pseudo-R2", colour = "") +
   theme(legend.position = "none",
         text = element_text(size = 15)) +
-  scale_colour_manual(values = dlpfc_colours)
+  scale_colour_manual(values = dlpfc_colours) +
+  stat_compare_means(method = "wilcox.test", 
+                     label = "p.format",
+                     paired = TRUE,
+                     ref.group = "wSIR",
+                     vjust = vjust_amount)
 #dlpfc_psR2_boxplot
 
 dlpfc_psR2_lineplot <- ggplot(psR2_dlpfc_df_full, aes(x = as.factor(sample), y = psR2, colour = method, shape = method)) +
@@ -37,6 +55,49 @@ dlpfc_psR2_lineplot
 #ggsave(plot = dlpfc_psR2_lineplot, filename = "response_figs/supp_fig4/dlpfc_psR2_lineplot.pdf")
 
 ```
+
+# ARI
+
+```{r}
+load("aris_vec.RData")
+load("samples_vec.RData")
+
+aris_res_df <- data.frame(ari = aris_vec,
+                          method = vec_rep_each(c("wSIR", 
+                                                  "PRECAST", 
+                                                  "DR.SC", 
+                                                  "SpatialPCA", 
+                                                  "STAMP"),
+                                                length(samples_vec)),
+                          sample = rep(samples_vec,5))
+
+dlpfc_ari_boxplot <- ggplot(aris_res_df, aes(x = method, y = ari, colour = method)) +
+  geom_boxplot() +
+  theme_classic() +
+  labs(x = "DR method", y = "ARI", colour = "") +
+  theme(legend.position = "none",
+        text = element_text(size = 15)) +
+  scale_colour_manual(values = dlpfc_colours) +
+  stat_compare_means(method = "wilcox.test", 
+                     label = "p.format",
+                     paired = TRUE,
+                     ref.group = "wSIR",
+                     vjust = vjust_amount)
+
+dlpfc_ari_lineplot <- ggplot(aris_res_df, aes(x = as.factor(sample), y = ari, colour = method, shape = method)) +
+  geom_point() +
+  theme_classic(base_size = 20) +
+  labs(x = "Sample", y = "ARI", colour = "DR method") +
+  scale_colour_manual(name = "DR method", values = dlpfc_colours) +
+  scale_shape_manual(name = "DR method", values = c(14:18)) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5))
+
+```
+
+
+# create final fig
 
 ```{r}
 library(patchwork)

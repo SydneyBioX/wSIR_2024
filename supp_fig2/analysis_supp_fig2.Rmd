@@ -155,3 +155,94 @@ for (i in 1:nrep) {
 #save(bcdc_vals, file = "shift_bcdc_vals.RData")
 ```
 
+# Dropout/sparsity simulation
+
+```{r}
+library(tidyverse)
+library(scuttle)
+library(vctrs)
+library(wSIR)
+library(energy)
+
+# Packages needed to download data
+library(scran) # for logNormCounts
+library(MouseGastrulationData) # to download the data for this vignette
+
+
+seqfish_data_sample1 <- LohoffSeqFISHData(samples = c(1,2))
+seqfish_data_sample1 = logNormCounts(seqfish_data_sample1) # log transform variance stabilising
+rownames(seqfish_data_sample1) <- rowData(seqfish_data_sample1)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+sample1_exprs = t(assay(seqfish_data_sample1, "logcounts")) # extract matrix of gene expressions
+sample1_exprs_raw = t(assay(seqfish_data_sample1, "counts")) # extract counts of gene expressions
+sample1_coords = spatialCoords(seqfish_data_sample1)[,1:2] %>% as.data.frame()
+colnames(sample1_coords) = c("x", "y")
+
+bcdc_vals <- c()
+downsample_props <- c(1:10)/10
+nreps <- 10
+pct_to_take <- 0.2
+size_to_take <- floor(pct_to_take*nrow(sample1_coords))
+s1_counts <- assay(seqfish_data_sample1, "counts")
+spe_obj <- LohoffSeqFISHData(samples = c(1,2))
+
+for (current_prop in downsample_props) {
+  # for each proportion, want to take that many counts nreps times
+  print(paste0("Current proportion: ", current_prop))
+  
+  s1_counts_down <- s1_counts %>% downsampleMatrix(prop = current_prop) # calculate downsample counts matrix
+  
+  # create spe with downsampled counts
+  # extract sample1_exprs_down, sample1_coords_down as objects of interest
+  spe_down <- spe_obj
+  rownames(spe_down) <- rowData(spe_down)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+  assay(spe_down, "counts") <- s1_counts_down
+  spe_down = logNormCounts(spe_down) # log transform variance stabilising
+  rownames(spe_down) <- rowData(spe_down)[,"SYMBOL"] # change rownames to gene symbols that are consistent
+  sample1_exprs_down = t(assay(spe_down, "logcounts")) # extract matrix of gene expressions
+  sample1_exprs_raw_down = t(assay(spe_down, "counts")) # extract counts of gene expressions
+  sample1_coords_down = spatialCoords(spe_down)[,1:2] %>% as.data.frame()
+  colnames(sample1_coords_down) = c("x", "y")
+  
+  for (i in 1:nreps) {
+    print(paste0("Current iteration: ", i))
+  
+    points_to_take <- sample(c(1:nrow(sample1_coords)), size = size_to_take) # sample the points each iteration
+    wsir_out <- wSIR(sample1_exprs_down[points_to_take,], coords = sample1_coords_down[points_to_take,])
+    current_bcdc <- energy::bcdcor(wsir_out$scores, sample1_coords_down[points_to_take,])
+    bcdc_vals <- bcdc_vals %>% append(current_bcdc)
+  }
+}
+
+# analyse
+downsample_df <- data.frame(bcdc = bcdc_vals,
+                            prop = vec_rep_each(downsample_props, nreps))
+downsample_df <- downsample_df %>% mutate(retained = 1-prop)
+
+# ggplot(downsample_df, aes(x = as.factor(retained), y = bcdc)) +
+#   geom_boxplot() +
+#   labs(x = "Downsample proportion", y = "Bias-corrected distance correlation") +
+#   theme_classic() +
+#   ggtitle("Bias-corrected distance correlation for different dropout rates",
+#           subtitle = "Mouse embryo sample 1 dataset. Boxplots are bootstrap selection of dataset")
+
+# line + error cloud
+downsample_mean_df <- downsample_df %>% 
+  group_by(retained) %>%
+  summarise(mean = mean(bcdc),
+            sd = sd(bcdc))
+
+dropout_fig <- ggplot(downsample_mean_df, aes(x = retained, y = mean)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd), alpha = 0.2) +
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(x = "Downsample proportion", y = "BCDC") +
+  theme_classic() +
+  # ggtitle("Bias-corrected distance correlation for different dropout rates",
+  #         subtitle = "Mouse embryo sample 1 dataset. Error cloud represents bootstrap selection of dataset") +
+  theme(text = element_text(size = 15))
+dropout_fig
+ggsave(plot = dropout_fig, "dropout_fig.pdf")
+```
+
+
+

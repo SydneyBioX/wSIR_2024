@@ -30,6 +30,7 @@ library(scran)
 library(scuttle) 
 library(scater)
 library(patchwork)
+library(vctrs)
 source("spatial_benchmark_functions.R")
 dlpfc_spe <- readRDS("dski/nobackup/biostat/datasets/SpatialTranscriptomics/Visium_DLPFC/spe_DLPFC.Rds")
 ```
@@ -142,4 +143,190 @@ psR2_dlpfc_df_full <- data.frame(psR2 = c(psR2_wsir_vals,
 save(psR2_dlpfc_df_full, file = "psR2_dlpfc_df_full.RData")
 ```
 
+# ARI
+
+create wrapper functions for clustering
+
+```{r}
+library(aricode)
+precast_wrapper_cluster <- function(exprs, 
+                                    coords, 
+                                    K = 7, 
+                                    maxIter = 30, 
+                                    gene.number = ncol(exprs)) {
+  seurat_obj <- CreateSeuratObject(counts = t(exprs), project = "SpatialProject")
+  row.names(coords) <- rownames(exprs)
+  colnames(coords) <- c("row", "col")
+  seurat_obj <- AddMetaData(seurat_obj, metadata = coords)
+  
+  preobj <- CreatePRECASTObject(seuList = list(seurat_obj), 
+                                selectGenesMethod = "HVGs", 
+                                gene.number = gene.number,
+                                verbose = FALSE) 
+  PRECASTObj <- AddAdjList(preobj, platform = "ST")
+  PRECASTObj <- AddParSetting(PRECASTObj, 
+                              Sigma_equal = FALSE, 
+                              coreNum = 1, 
+                              maxIter = maxIter, 
+                              verbose = FALSE)
+  
+  PRECASTObj <- PRECAST(PRECASTObj, K = K)
+  
+  seuInt <- PRECASTObj@seulist[[1]]
+  seuInt@meta.data$cluster <- factor(unlist(PRECASTObj@resList[[1]]$cluster))
+  seuInt@meta.data$batch <- 1
+  seuInt <- Add_embed(PRECASTObj@resList[[1]]$hZ[[1]], seuInt, embed_name = "PRECAST")
+  posList <- lapply(PRECASTObj@seulist, function(x) cbind(x$row, x$col))
+  seuInt <- Add_embed(posList[[1]], seuInt, embed_name = "position")
+  Idents(seuInt) <- factor(seuInt@meta.data$cluster)
+  #return(seuInt@reductions$PRECAST@cell.embeddings)
+  return(seuInt$cluster)
+}
+
+drsc_wrapper_cluster <- function(exprs, coords, pct0 = 0.999, K = 7) {
+  adj <- create_adjacency(coords = coords, pct0 = pct0)
+  drsc_obj <- DR.SC_fit(X = exprs, Adj_sp = adj, K = K)
+  lowdim <- drsc_obj$Objdrsc[[1]]$hZ
+  return(drsc_obj$Objdrsc[[1]]$cluster)
+}
+
+wsir_cluster <- function(exprs, coords, K, slices = 8, alpha = 4) {
+  wsir_out <- wSIR(X = exprs, 
+                   coords = coords,
+                   slices = slices,
+                   alpha = alpha)
+  wsir_kmns_out <- kmeans(x = wsir_out$scores, centers = K)
+  return(wsir_kmns_out$cluster)
+}
+
+spca_wrapper_cluster <- function(counts = NULL, # 1) These need to be genes x cells (standard counts slot sce)
+                         # 2) These need to have colnames (cell names)
+                         coords = NULL,
+                         ncores = 10,
+                         K = 7,
+                         gene.number=3000,
+                         gene.type = "spatial") {
+  spca_res <- CreateSpatialPCAObject(counts = counts, # create SPCA object
+                                     location = coords,
+                                     numCores_spark = ncores,
+                                     gene.number = gene.number,
+                                     gene.type = gene.type)
+  spca_res <- SpatialPCA_buildKernel(spca_res, # build kernel (from spca tutorial)
+                                     kerneltype="gaussian", 
+                                     bandwidthtype="SJ",
+                                     bandwidth.set.by.user=NULL,
+                                     sparseKernel = TRUE,
+                                     sparseKernel_ncore = ncores)
+  spca_res <- SpatialPCA_EstimateLoading(spca_res, # estimate loadings (spca tutorial)
+                                         fast=TRUE,
+                                         SpatialPCnum=20) 
+  spca_res <- SpatialPCA_SpatialPCs(spca_res, fast=TRUE) # calculate spatialPCs (spca tutorial)
+  spca_projected <- t(spca_res@SpatialPCs) # extract projected matrix
+  kept_cells <- spca_res@normalized_expr %>% colnames() # spca removes some cells - check which are left
+  kept_indices <- colnames(counts) %in% kept_cells # find which of original cells are kept
+  coords_kept <- coords[kept_indices,] # subset original coords to just get the coords of cells spca kept
+  #return(list(projected = spca_projected, coords = coords_kept)) # return projected and (subsetted) coords
+  return(list(cluster = walktrap_clustering(clusternum=K,
+                                       latent_dat=spca_res@SpatialPCs,knearest=70),
+              spots = colnames(spca_res@normalized_expr)))
+}
+```
+
+```{r}
+wsir_aris <- c()
+precast_aris <- c()
+drsc_aris <- c()
+spca_aris <- c()
+
+for (current_sample in samples_vec) {
+  # extract this sample
+  spe_DLPFC_currentsample <- spe_DLPFC[,spe_DLPFC@colData$sample == current_sample]
+  
+  # filter HVGs
+  modelled_var_v1 <- modelGeneVar(spe_DLPFC_currentsample@assays@data$logcounts)
+  topgenes_v1 <- scran::getTopHVGs(modelled_var_v1, n = 500)
+  spe_DLPFC_currentsample <- spe_DLPFC_currentsample[topgenes_v1,
+                                                     !is.na(spe_DLPFC_currentsample$layer_guess_reordered_short)]
+  
+  # extract current exprs, coords, counts
+  exprs1 <- t(spe_DLPFC_currentsample@assays@data$logcounts)
+  coords1 <- spe_DLPFC_currentsample@int_colData@listData$spatialCoords
+  counts1 <- t(spe_DLPFC_currentsample@assays@data$counts)
+  domains1 <- spe_DLPFC_currentsample@colData$layer_guess_reordered_short
+  
+  current_k <- length(unique(spe_DLPFC_currentsample@colData$layer_guess_reordered_short))
+
+  # create clusters
+  wsir_clusters <- wsir_cluster(exprs = exprs1,
+                                coords = coords1,
+                                K = current_k)
+  precast_clusters <- precast_wrapper_cluster(exprs = exprs1,
+                                              coords = coords1,
+                                              K = current_k)
+  drsc_clusters <- drsc_wrapper_cluster(exprs = exprs1,
+                                        coords = coords1,
+                                        K = current_k)
+  spca_clusters_obj <- spca_wrapper_cluster(counts = t(counts1),
+                                            coords = coords1,
+                                            K = current_k)
+  
+  # extract spatial domains for precast and spca
+  precast_cells <- spe_DLPFC_currentsample@colData$spot_ID %in% names(precast_clusters)
+  spca_cells <- spe_DLPFC_currentsample@colData$spot_ID %in% spca_clusters_obj$spots
+  precast_domains <- domains1[precast_cells]
+  spca_domains <- domains1[spca_cells]
+  domain_list <- list(domains1, 
+                      precast_domains, 
+                      domains1, 
+                      spca_domains)
+  wsir_aris <- wsir_aris %>% append(ARI(domain_list[[1]], wsir_clusters))
+  precast_aris <- precast_aris %>% append(ARI(domain_list[[2]], precast_clusters))
+  drsc_aris <- drsc_aris %>% append(ARI(domain_list[[3]], as.vector(drsc_clusters)))
+  spca_aris <- spca_aris %>% append(ARI(domain_list[[4]], spca_clusters_obj$cluster))
+}
+```
+
+STAMP
+
+```{r}
+library(aricode)
+samples_vec <- unique(spe_DLPFC@colData$sample)
+ari_dlpfc_stamp <- c()
+for (current_sample in samples_vec) {
+  # extract this sample
+  spe_DLPFC_currentsample <- spe_DLPFC[,spe_DLPFC@colData$sample == current_sample]
+  
+  # filter HVGs
+  modelled_var_v1 <- modelGeneVar(spe_DLPFC_currentsample@assays@data$logcounts)
+  topgenes_v1 <- scran::getTopHVGs(modelled_var_v1, n = 500)
+  spe_DLPFC_currentsample <- spe_DLPFC_currentsample[topgenes_v1,]
+  
+  # extract current coords and counts
+  coords1 <- spe_DLPFC_currentsample@int_colData@listData$spatialCoords
+  counts1 <- t(spe_DLPFC_currentsample@assays@data$counts)
+  domains1 <- spe_DLPFC_currentsample@colData$layer_guess_reordered_short
+
+  stamp_out <- stamp_wrapper_complete(X = counts1,
+                                      coords = as.matrix(coords1))
+  
+  stamp_cells <- domains1[(spe_DLPFC_currentsample@colData$spot_ID %in% rownames(stamp_out$coords))]
+  notna <- !is.na(stamp_cells)
+
+  current_k <- length(unique(spe_DLPFC_currentsample@colData$layer_guess_reordered_short))
+  
+  stamp_kmns_out <- kmeans(x = stamp_out$embedding, centers = current_k)
+  current_clusters <- stamp_kmns_out$cluster
+  
+  current_ari <- ARI(current_clusters[notna], stamp_cells[notna])
+  
+  ari_dlpfc_stamp <- ari_dlpfc_stamp %>% append(current_ari)
+}
+```
+
+analyse
+
+```{r}
+aris_vec <- c(wsir_aris, precast_aris, drsc_aris, spca_aris)
+aris_vec <- aris_vec %>% append(ari_dlpfc_stamp)
+```
 
